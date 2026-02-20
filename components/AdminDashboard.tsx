@@ -1,8 +1,10 @@
 
+'use client';
+
 import React, { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
-import { UserProfile, SchoolInfo, Resource, StudentProgress } from '../types';
-import { fetchSystemHealth, fetchTeachers, fetchStudentProgress, fetchClassResources } from '../services/databaseService';
+import { UserProfile, SchoolInfo, Resource, StudentProgress } from '@/types';
+import { fetchSystemHealth, fetchTeachers, fetchStudentProgress, fetchClassResources } from '@/lib/services/databaseService';
 
 interface Props {
   onLogout: () => void;

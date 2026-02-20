@@ -1,7 +1,9 @@
 
+'use client';
+
 import React, { useState, useEffect } from 'react';
-import { Resource, SchoolInfo, UserProfile, StudentProgress, Exam } from '../types';
-import { fetchTeacherCourses, fetchStudentProgress, sendStudentFeedback, scheduleExam, fetchUpcomingExams } from '../services/databaseService';
+import { Resource, SchoolInfo, UserProfile, StudentProgress, Exam } from '@/types';
+import { fetchTeacherCourses, fetchStudentProgress, sendStudentFeedback, scheduleExam, fetchUpcomingExams } from '@/lib/services/databaseService';
 
 interface Props {
   onLogout: () => void;

@@ -1,8 +1,0 @@
-{
-  "name": "Soma-Agent: Ugandan O-Level Hub",
-  "description": "An AI-powered educational platform tailored for the Ugandan NCDC syllabus, featuring role-specific dashboards for students, teachers, and parents.",
-  "requestFramePermissions": [
-    "camera",
-    "microphone"
-  ]
-}

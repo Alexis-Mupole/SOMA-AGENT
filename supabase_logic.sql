@@ -97,6 +97,16 @@ CREATE POLICY "Users can view own profile"
 ON profiles FOR SELECT 
 USING (auth.uid() = id);
 
+-- Profiles: Users can insert their own profile during registration
+CREATE POLICY "Users can insert own profile" 
+ON profiles FOR INSERT 
+WITH CHECK (auth.uid() = id);
+
+-- Profiles: Users can update their own profile
+CREATE POLICY "Users can update own profile" 
+ON profiles FOR UPDATE 
+USING (auth.uid() = id);
+
 -- Academics (DOS): Can view and approve all students in their school
 CREATE POLICY "Academics manage school profiles" 
 ON profiles FOR ALL 

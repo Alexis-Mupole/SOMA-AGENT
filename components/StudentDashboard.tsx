@@ -1,11 +1,13 @@
 
+'use client';
+
 import React, { useState, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import ChatAgent from './ChatAgent';
 import MasteryMap from './MasteryMap';
 import ChallengeModal from './ChallengeModal';
-import { Resource, SchoolInfo, UserProfile, TeacherFeedback, Exam } from '../types';
-import { fetchClassResources, fetchStudentFeedback, fetchUpcomingExams } from '../services/databaseService';
+import { Resource, SchoolInfo, UserProfile, TeacherFeedback, Exam } from '@/types';
+import { fetchClassResources, fetchStudentFeedback, fetchUpcomingExams } from '@/lib/services/databaseService';
 
 interface Props {
   onLogout: () => void;

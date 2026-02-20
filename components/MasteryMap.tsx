@@ -1,6 +1,8 @@
 
+'use client';
+
 import React from 'react';
-import { MasteryStatus, SyllabusNode } from '../types';
+import { MasteryStatus, SyllabusNode } from '@/types';
 
 const SYLLABUS: SyllabusNode[] = [
   { id: '1', title: 'Cell Biology', subject: 'Biology', status: MasteryStatus.MASTERED, order: 1 },

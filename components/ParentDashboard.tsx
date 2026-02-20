@@ -1,7 +1,9 @@
 
+'use client';
+
 import React, { useState } from 'react';
-import { SchoolInfo, UserProfile } from '../types';
-import { linkStudentByCode } from '../services/databaseService';
+import { SchoolInfo, UserProfile } from '@/types';
+import { linkStudentByCode } from '@/lib/services/databaseService';
 
 interface ParentDashboardProps {
   onLogout: () => void;

@@ -2,6 +2,8 @@
 
 An AI learning platform for Ugandan secondary schools. Soma-Agent brings the NCDC O-Level syllabus, a subject-aware AI study partner and honest progress reporting into one calm workspace for students, teachers, guardians and school leaders.
 
+**Live demo:** https://soma-agent.vercel.app
+
 The app runs immediately with no configuration. A complete demo dataset and an offline curriculum tutor are bundled, so every screen and every AI flow works without Supabase or Gemini keys.
 
 ## Product tour

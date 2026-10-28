@@ -1,16 +1,20 @@
-
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { SchoolInfo, UserProfile, SchoolClass } from '@/types';
-import { 
-  fetchPendingStudents, 
-  updateStudentStatus, 
-  fetchSchoolClasses, 
-  createSchoolClass, 
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { SchoolClass, SchoolInfo, UserProfile } from '@/types';
+import {
+  assignCourseToTeacher,
+  createSchoolClass,
+  fetchPendingStudents,
+  fetchSchoolClasses,
   fetchTeachers,
-  assignCourseToTeacher 
+  updateStudentStatus,
 } from '@/lib/services/databaseService';
+import AppShell, { NavItem } from './ui/Shell';
+import { PageHeader, SectionHeader, EmptyState } from './ui/PageHeader';
+import StatCard from './ui/StatCard';
+import Icon from './ui/Icon';
+import { useToast } from './ui/Toast';
 
 interface Props {
   onLogout: () => void;
@@ -18,255 +22,309 @@ interface Props {
   userProfile: UserProfile;
 }
 
-const AcademicDashboard: React.FC<Props> = ({ onLogout, school, userProfile }) => {
-  const [activeTab, setActiveTab] = useState<'approvals' | 'classes' | 'assignments'>('approvals');
-  const [pendingStudents, setPendingStudents] = useState<UserProfile[]>([]);
+type Tab = 'enrollment' | 'classrooms' | 'staffing';
+
+const NAV: NavItem[] = [
+  { id: 'enrollment', label: 'Enrollment', icon: 'user-check', short: 'Enroll' },
+  { id: 'classrooms', label: 'Classrooms', icon: 'grid', short: 'Classes' },
+  { id: 'staffing', label: 'Teaching staff', icon: 'users', short: 'Staff' },
+];
+
+const SUBJECTS = ['Biology', 'Chemistry', 'Mathematics', 'Physics', 'English'];
+const LEVELS = ['Senior 1', 'Senior 2', 'Senior 3', 'Senior 4'];
+
+const initials = (name: string) =>
+  name
+    .split(' ')
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('');
+
+export default function AcademicDashboard({ onLogout, school, userProfile }: Props) {
+  const { toast } = useToast();
+  const [tab, setTab] = useState<Tab>('enrollment');
+  const [pending, setPending] = useState<UserProfile[]>([]);
   const [classes, setClasses] = useState<SchoolClass[]>([]);
   const [teachers, setTeachers] = useState<UserProfile[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  const [selectedTeacher, setSelectedTeacher] = useState('');
-  const [selectedSubject, setSelectedSubject] = useState('Biology');
+  const [className, setClassName] = useState('');
+  const [level, setLevel] = useState('Senior 4');
+  const [teacherId, setTeacherId] = useState('');
+  const [subject, setSubject] = useState('Biology');
+  const [assignments, setAssignments] = useState<Record<string, string[]>>({});
 
-  const [newClassName, setNewClassName] = useState('');
-  const [newClassLevel, setNewClassLevel] = useState('Senior 4');
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [students, rooms, staff] = await Promise.all([
+      fetchPendingStudents(school.name),
+      fetchSchoolClasses(school.name),
+      fetchTeachers(school.name),
+    ]);
+    setPending(students);
+    setClasses(rooms);
+    setTeachers(staff);
+    setLoading(false);
+  }, [school.name]);
 
   useEffect(() => {
-    loadData();
-  }, [activeTab]);
+    load();
+  }, [load]);
 
-  const loadData = async () => {
-    setIsLoading(true);
-    if (activeTab === 'approvals') {
-      const data = await fetchPendingStudents(school.name);
-      setPendingStudents(data);
-    } else if (activeTab === 'classes') {
-      const data = await fetchSchoolClasses(school.name);
-      setClasses(data);
-    } else if (activeTab === 'assignments') {
-      const data = await fetchTeachers(school.name);
-      setTeachers(data);
-    }
-    setIsLoading(false);
+  const totalLearners = useMemo(
+    () => classes.reduce((sum, room) => sum + room.studentCount, 0),
+    [classes]
+  );
+
+  const approve = async (student: UserProfile) => {
+    await updateStudentStatus(student.id, 'APPROVED');
+    setPending((prev) => prev.filter((s) => s.id !== student.id));
+    toast('Enrollment approved', { description: `${student.fullName} can now sign in.` });
   };
 
-  const handleApprove = async (id: string) => {
-    await updateStudentStatus(id, 'APPROVED');
-    setPendingStudents(prev => prev.filter(s => s.id !== id));
-    alert("Student Profile Approved & Activated.");
+  const decline = (student: UserProfile) => {
+    setPending((prev) => prev.filter((s) => s.id !== student.id));
+    toast('Enrollment declined', { description: `${student.fullName} was removed from the queue.`, tone: 'info' });
   };
 
-  const handleCreateClass = async () => {
-    if (!newClassName) return;
-    const newCls = await createSchoolClass(school.name, newClassName, newClassLevel);
-    if (newCls) setClasses(prev => [...prev, newCls as SchoolClass]);
-    setNewClassName('');
-    alert(`Class ${newClassName} Created.`);
+  const approveAll = async () => {
+    const queue = [...pending];
+    await Promise.all(queue.map((student) => updateStudentStatus(student.id, 'APPROVED')));
+    setPending([]);
+    toast(`${queue.length} students approved`, { description: 'Their Soma codes are now active.' });
   };
 
-  const handleAssign = async () => {
-    if (!selectedTeacher) return;
-    await assignCourseToTeacher(selectedTeacher, selectedSubject);
-    alert(`Course Assigned to ${teachers.find(t => t.id === selectedTeacher)?.fullName}`);
+  const createClass = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!className.trim()) return;
+    const created = await createSchoolClass(school.name, className.trim(), level);
+    if (created) setClasses((prev) => [...prev, created as SchoolClass]);
+    setClassName('');
+    toast('Classroom opened', { description: `${className.trim()} · ${level}` });
+  };
+
+  const assign = async () => {
+    if (!teacherId) return;
+    await assignCourseToTeacher(teacherId, subject);
+    const teacher = teachers.find((t) => t.id === teacherId);
+    setAssignments((prev) => ({
+      ...prev,
+      [teacherId]: Array.from(new Set([...(prev[teacherId] || []), subject])),
+    }));
+    toast('Assignment saved', { description: `${teacher?.fullName || 'Teacher'} now teaches ${subject}.` });
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 pb-10">
-      <header className="bg-white border-b border-slate-200 p-4 md:p-6 sticky top-0 z-20 shadow-sm">
-        <div className="max-w-6xl mx-auto flex justify-between items-center">
-          <div className="flex items-center space-x-3 md:space-x-4">
-             <div className="w-10 h-10 md:w-12 md:h-12 bg-leaf-green rounded-2xl flex items-center justify-center text-white font-bold shadow-lg transform rotate-2 text-sm md:text-xl">A</div>
-             <div>
-                <h1 className="font-montserrat font-bold text-uni-blue text-sm md:text-xl leading-tight">{userProfile.fullName}</h1>
-                <p className="text-[8px] md:text-[10px] text-slate-500 font-bold uppercase tracking-widest">Director of Studies</p>
-             </div>
-          </div>
-          <button onClick={onLogout} className="bg-slate-50 p-2 md:p-3 rounded-xl md:rounded-2xl hover:bg-red-50 hover:text-red-500 transition-all border border-slate-200">
-             <svg className="w-5 h-5 md:w-6 md:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+    <AppShell
+      roleLabel="Academic office"
+      nav={NAV}
+      active={tab}
+      onNavigate={(id) => setTab(id as Tab)}
+      user={userProfile}
+      school={school}
+      onLogout={onLogout}
+      accent="green"
+    >
+      <PageHeader
+        eyebrow={`${school.name} · Academic office`}
+        title="School operations"
+        description="Approve enrollments, open classrooms and keep teaching assignments tidy."
+        actions={
+          <button onClick={load} className="btn-secondary">
+            <Icon name={loading ? 'refresh' : 'refresh'} size={15} className={loading ? 'animate-spin' : ''} /> Refresh
           </button>
-        </div>
-      </header>
+        }
+      />
 
-      <main className="flex-1 p-4 md:p-6 max-w-6xl mx-auto w-full">
-        {/* Academic Hub Navigation */}
-        <div className="flex space-x-1.5 bg-white/70 backdrop-blur-md p-1.5 rounded-[24px] mb-8 md:mb-10 w-full md:w-fit border border-slate-200 shadow-sm overflow-x-auto scrollbar-hide">
-          {[
-            { id: 'approvals', label: 'Enrollment', icon: '👤' },
-            { id: 'classes', label: 'Classrooms', icon: '🏫' },
-            { id: 'assignments', label: 'Teaching Staff', icon: '👩‍🏫' }
-          ].map(tab => (
-            <button 
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)} 
-              className={`flex-1 md:flex-none px-4 md:px-8 py-3 rounded-[18px] text-[10px] md:text-sm font-black uppercase tracking-widest transition-all flex items-center justify-center space-x-2 whitespace-nowrap ${activeTab === tab.id ? 'bg-uni-blue shadow-lg text-white' : 'text-slate-500 hover:bg-white'}`}
-            >
-              <span className="text-sm md:text-base">{tab.icon}</span>
-              <span>{tab.label}</span>
-            </button>
-          ))}
-        </div>
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+        <StatCard label="Pending approvals" value={pending.length} icon="user-check" tone="gold" hint="Awaiting your review" />
+        <StatCard label="Classrooms" value={classes.length} icon="grid" tone="blue" hint={`${totalLearners} learners enrolled`} />
+        <StatCard label="Teaching staff" value={teachers.length} icon="users" tone="green" hint="Active this term" />
+        <StatCard label="Subjects offered" value={SUBJECTS.length} icon="book" tone="violet" hint="O-Level core" />
+      </div>
 
-        {activeTab === 'approvals' && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
-            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-2">
-              <div>
-                <h2 className="text-xl md:text-2xl font-bold text-uni-blue">Enrollment Queue</h2>
-                <p className="text-xs md:text-sm text-slate-500">Review student profiles for the syllabus.</p>
-              </div>
+      {tab === 'enrollment' && (
+        <div className="space-y-5">
+          <SectionHeader
+            title="Enrollment queue"
+            description="New student profiles stay locked until the academic office approves them."
+            actions={
+              pending.length > 0 ? (
+                <button onClick={approveAll} className="btn-green btn-sm">
+                  <Icon name="check" size={13} /> Approve all
+                </button>
+              ) : undefined
+            }
+          />
+
+          {loading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="skeleton h-20 w-full" />
+              ))}
             </div>
-            {isLoading ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {[1, 2].map(i => <div key={i} className="h-32 bg-white rounded-[32px] animate-pulse" />)}
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6">
-                {pendingStudents.length === 0 ? (
-                  <div className="col-span-full bg-white p-12 md:p-20 rounded-[32px] md:rounded-[40px] text-center border-2 border-dashed border-slate-100">
-                    <p className="text-slate-300 font-bold text-sm">All caught up! No pending students.</p>
-                  </div>
-                ) : (
-                  pendingStudents.map(student => (
-                    <div key={student.id} className="bg-white p-4 md:p-6 rounded-[28px] md:rounded-[32px] border border-slate-100 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 shadow-xl shadow-slate-200/40">
-                      <div className="flex items-center space-x-4">
-                        <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center text-2xl shadow-inner">👨‍🎓</div>
-                        <div>
-                          <h4 className="font-bold text-slate-800 text-base md:text-lg">{student.fullName}</h4>
-                          <div className="flex flex-wrap items-center gap-2 mt-1">
-                            <span className="text-[9px] bg-crane-yellow/20 text-uni-blue px-2 py-0.5 rounded font-black tracking-tighter">{student.studentCode}</span>
-                            <span className="text-[9px] text-slate-400 font-black uppercase truncate max-w-[120px]">{student.email}</span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex w-full sm:w-auto space-x-2">
-                        <button onClick={() => handleApprove(student.id)} className="flex-1 sm:flex-none bg-leaf-green text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:scale-105 transition-transform">Approve</button>
-                        <button className="flex-1 sm:flex-none bg-slate-50 text-slate-400 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-50 hover:text-red-500">Decline</button>
-                      </div>
+          ) : pending.length === 0 ? (
+            <EmptyState
+              icon="check-circle"
+              title="Queue cleared"
+              description="Every submitted profile has been reviewed. New enrollments will appear here automatically."
+            />
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {pending.map((student) => (
+                <article key={student.id} className="card flex flex-col gap-4 p-4 sm:flex-row sm:items-center">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-uni-blue/5 text-[11px] font-extrabold text-uni-blue">
+                      {initials(student.fullName)}
                     </div>
-                  ))
-                )}
+                    <div className="min-w-0">
+                      <p className="truncate text-[12.5px] font-bold text-uni-blue">{student.fullName}</p>
+                      <p className="truncate text-[10.5px] text-slate-400">{student.email}</p>
+                      <span className="mt-1 inline-flex rounded-md bg-crane-yellow/15 px-1.5 py-0.5 font-mono text-[9.5px] font-bold text-crane-yellow-800">
+                        {student.studentCode}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => decline(student)} className="btn-ghost btn-sm flex-1 text-slate-400 hover:text-red-500 sm:flex-none">
+                      Decline
+                    </button>
+                    <button onClick={() => approve(student)} className="btn-green btn-sm flex-1 sm:flex-none">
+                      <Icon name="check" size={12} /> Approve
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'classrooms' && (
+        <div className="grid gap-6 xl:grid-cols-[1fr_1.6fr]">
+          <div className="card h-fit p-5 sm:p-6">
+            <SectionHeader title="Open a classroom" description="Names follow the school's usual convention." />
+            <form onSubmit={createClass} className="space-y-4">
+              <div>
+                <label className="label" htmlFor="className">Class name</label>
+                <input
+                  id="className"
+                  value={className}
+                  onChange={(e) => setClassName(e.target.value)}
+                  placeholder="e.g. Senior 4 West"
+                  className="input"
+                />
+              </div>
+              <div>
+                <label className="label" htmlFor="classLevel">Senior level</label>
+                <select id="classLevel" value={level} onChange={(e) => setLevel(e.target.value)} className="select">
+                  {LEVELS.map((item) => (
+                    <option key={item}>{item}</option>
+                  ))}
+                </select>
+              </div>
+              <button type="submit" disabled={!className.trim()} className="btn-primary w-full">
+                <Icon name="plus" size={15} /> Create classroom
+              </button>
+            </form>
+          </div>
+
+          <div>
+            <SectionHeader title="Active classrooms" description="Live learner counts for this term." />
+            {classes.length === 0 ? (
+              <EmptyState icon="grid" title="No classrooms yet" description="Create your first class to begin enrolling learners." />
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2">
+                {classes.map((room) => (
+                  <article key={room.id} className="card p-4 transition-all hover:border-uni-blue/20 hover:shadow-soft">
+                    <div className="flex items-start justify-between">
+                      <span className="badge-green">{room.level}</span>
+                      <Icon name="grid" size={16} className="text-slate-300" />
+                    </div>
+                    <h3 className="mt-3 font-display text-[15px] font-bold text-uni-blue">{room.name}</h3>
+                    <p className="mt-1 text-[11px] text-slate-400">{room.studentCount} learners active</p>
+                    <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3">
+                      <span className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">Class teacher</span>
+                      <button
+                        onClick={() => toast('Roster opened (demo)', { description: `${room.name} learner list would appear here.`, tone: 'info' })}
+                        className="text-[10px] font-bold uppercase tracking-[0.08em] text-uni-blue hover:underline"
+                      >
+                        Manage
+                      </button>
+                    </div>
+                  </article>
+                ))}
               </div>
             )}
           </div>
-        )}
+        </div>
+      )}
 
-        {activeTab === 'classes' && (
-          <div className="space-y-10 animate-in fade-in">
-             <div className="bg-white p-6 md:p-8 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-xl shadow-slate-200/50">
-                <h2 className="text-lg md:text-xl font-bold text-uni-blue mb-6">Create New Classroom</h2>
-                <div className="flex flex-col md:flex-row gap-4">
-                  <div className="flex-1">
-                    <label className="text-[9px] md:text-[10px] font-bold text-slate-400 uppercase mb-2 block px-1">Class Name</label>
-                    <input 
-                      value={newClassName}
-                      onChange={e => setNewClassName(e.target.value)}
-                      placeholder="e.g. S.4 West" 
-                      className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none font-medium text-sm" 
-                    />
-                  </div>
-                  <div className="md:w-48">
-                    <label className="text-[9px] md:text-[10px] font-bold text-slate-400 uppercase mb-2 block px-1">Senior Level</label>
-                    <select 
-                      value={newClassLevel}
-                      onChange={e => setNewClassLevel(e.target.value)}
-                      className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none font-medium text-sm"
-                    >
-                      <option>Senior 1</option>
-                      <option>Senior 2</option>
-                      <option>Senior 3</option>
-                      <option>Senior 4</option>
-                    </select>
-                  </div>
-                  <button 
-                    onClick={handleCreateClass}
-                    className="md:self-end bg-uni-blue text-white px-8 py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] shadow-lg hover:scale-105 transition-transform"
-                  >
-                    Open Class
-                  </button>
-                </div>
-             </div>
-
-             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                {classes.map(cls => (
-                  <div key={cls.id} className="bg-white p-6 md:p-8 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-sm group hover:border-uni-blue transition-all">
-                    <div className="flex justify-between items-start mb-6">
-                       <span className="bg-leaf-green/10 text-leaf-green px-4 py-1 rounded-full text-[9px] font-black uppercase tracking-widest">{cls.level}</span>
-                       <span className="text-2xl opacity-40">🏢</span>
+      {tab === 'staffing' && (
+        <div className="grid gap-6 xl:grid-cols-[1.35fr_1fr]">
+          <div>
+            <SectionHeader title="Teaching staff" description="Subject links used for class tracking and feedback routing." />
+            <div className="card divide-y divide-slate-100 overflow-hidden">
+              {teachers.map((teacher) => (
+                <div key={teacher.id} className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center">
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-leaf-green/10 text-[10px] font-extrabold text-leaf-green-800">
+                      {initials(teacher.fullName)}
                     </div>
-                    <h3 className="text-xl font-bold text-slate-800 mb-2">{cls.name}</h3>
-                    <p className="text-xs text-slate-500 font-medium">{cls.studentCount} Students Active</p>
-                    <div className="mt-8 pt-6 border-t border-slate-50 flex justify-between items-center">
-                       <button className="text-[9px] font-black text-uni-blue uppercase tracking-widest hover:underline">Manage Students</button>
-                       <span className="w-8 h-8 bg-slate-50 rounded-full flex items-center justify-center text-xs group-hover:bg-uni-blue group-hover:text-white transition-all">→</span>
+                    <div className="min-w-0">
+                      <p className="truncate text-[12.5px] font-bold text-uni-blue">{teacher.fullName}</p>
+                      <p className="truncate text-[10px] text-slate-400">{teacher.email}</p>
                     </div>
                   </div>
-                ))}
-             </div>
-          </div>
-        )}
-
-        {activeTab === 'assignments' && (
-          <div className="animate-in fade-in space-y-8">
-             <div className="bg-uni-blue text-white p-6 md:p-10 rounded-[32px] md:rounded-[48px] shadow-2xl relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -mr-32 -mt-32" />
-                <h2 className="text-xl md:text-2xl font-bold mb-2">Teaching Assignments</h2>
-                <p className="text-white/60 text-xs md:text-sm max-w-lg mb-8">Link teachers to their specific subjects for instructional tracking.</p>
-                
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                   <select 
-                    value={selectedTeacher}
-                    onChange={e => setSelectedTeacher(e.target.value)}
-                    className="bg-white/10 border border-white/20 p-4 rounded-2xl text-white text-sm outline-none font-medium focus:bg-white/20"
-                   >
-                     <option value="" className="text-slate-800">Select Teacher...</option>
-                     {teachers.map(t => <option key={t.id} value={t.id} className="text-slate-800">{t.fullName}</option>)}
-                   </select>
-
-                   <select 
-                    value={selectedSubject}
-                    onChange={e => setSelectedSubject(e.target.value)}
-                    className="bg-white/10 border border-white/20 p-4 rounded-2xl text-white text-sm outline-none font-medium focus:bg-white/20"
-                   >
-                     <option className="text-slate-800">Biology</option>
-                     <option className="text-slate-800">Chemistry</option>
-                     <option className="text-slate-800">Mathematics</option>
-                     <option className="text-slate-800">Physics</option>
-                     <option className="text-slate-800">English</option>
-                   </select>
-
-                   <button 
-                    onClick={handleAssign}
-                    className="bg-crane-yellow text-uni-blue font-black uppercase text-[10px] tracking-widest p-4 rounded-2xl hover:bg-white transition-all shadow-xl shadow-crane-yellow/20"
-                   >
-                     Confirm Link
-                   </button>
+                  <div className="flex flex-wrap gap-1.5 pl-12 sm:justify-end sm:pl-0">
+                    {(assignments[teacher.id] || ['Biology']).map((item) => (
+                      <span key={item} className="badge-blue">
+                        {item}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-             </div>
-
-             <div className="bg-white p-6 md:p-8 rounded-[32px] md:rounded-[40px] border border-slate-100 shadow-sm">
-                <h3 className="font-bold text-uni-blue mb-6 px-1">Active Staff Roles</h3>
-                <div className="space-y-3 md:space-y-4">
-                   {teachers.map(t => (
-                     <div key={t.id} className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 md:p-5 bg-slate-50 rounded-[24px] md:rounded-[28px] border border-slate-100 gap-4">
-                        <div className="flex items-center space-x-4">
-                           <div className="w-10 h-10 md:w-12 md:h-12 bg-white rounded-2xl flex items-center justify-center text-xl shadow-sm border border-slate-100">👩‍🏫</div>
-                           <div>
-                              <p className="font-bold text-slate-800 text-sm md:text-base">{t.fullName}</p>
-                              <p className="text-[8px] md:text-[9px] text-slate-400 font-black uppercase tracking-widest">Senior Specialist</p>
-                           </div>
-                        </div>
-                        <div className="flex space-x-2">
-                           <span className="px-3 py-1 bg-uni-blue/10 text-uni-blue rounded-lg text-[9px] font-black uppercase tracking-tighter">Biology</span>
-                           <span className="px-3 py-1 bg-leaf-green/10 text-leaf-green rounded-lg text-[9px] font-black uppercase tracking-tighter">Active</span>
-                        </div>
-                     </div>
-                   ))}
-                </div>
-             </div>
+              ))}
+            </div>
           </div>
-        )}
-      </main>
-    </div>
+
+          <div className="card h-fit p-5 sm:p-6">
+            <SectionHeader title="Assign a subject" description="Link a teacher to an O-Level subject." />
+            <div className="space-y-4">
+              <div>
+                <label className="label" htmlFor="teacher">Teacher</label>
+                <select
+                  id="teacher"
+                  value={teacherId}
+                  onChange={(e) => setTeacherId(e.target.value)}
+                  className="select"
+                >
+                  <option value="">Select teacher…</option>
+                  {teachers.map((teacher) => (
+                    <option key={teacher.id} value={teacher.id}>
+                      {teacher.fullName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="label" htmlFor="subject">Subject</label>
+                <select id="subject" value={subject} onChange={(e) => setSubject(e.target.value)} className="select">
+                  {SUBJECTS.map((item) => (
+                    <option key={item}>{item}</option>
+                  ))}
+                </select>
+              </div>
+              <button onClick={assign} disabled={!teacherId} className="btn-primary w-full">
+                <Icon name="link" size={15} /> Save assignment
+              </button>
+              <p className="rounded-xl bg-slate-50 p-3 text-[10.5px] leading-relaxed text-slate-500">
+                Assignments decide which classes appear in a teacher&apos;s workspace and which guardians receive updates.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+    </AppShell>
   );
-};
-
-export default AcademicDashboard;
+}

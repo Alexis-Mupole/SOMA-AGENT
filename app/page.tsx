@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Login from '@/components/Login';
 import StudentDashboard from '@/components/StudentDashboard';
 import TeacherDashboard from '@/components/TeacherDashboard';
@@ -8,7 +8,7 @@ import ParentDashboard from '@/components/ParentDashboard';
 import AcademicDashboard from '@/components/AcademicDashboard';
 import AdminDashboard from '@/components/AdminDashboard';
 import { UserProfile, Resource, SchoolInfo } from '@/types';
-import { getCurrentProfile, logoutUser } from '@/lib/services/databaseService';
+import { fetchClassResources, getCurrentProfile, logoutUser } from '@/lib/services/databaseService';
 import { ToastProvider } from '@/components/ui/Toast';
 import Logo from '@/components/ui/Logo';
 
@@ -44,6 +44,17 @@ export default function Home() {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let mounted = true;
+    fetchClassResources(SCHOOL.name).then((list) => {
+      if (mounted && list.length) setResources(list);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [isAuthenticated]);
 
   const handleLoginSuccess = (userProfile: UserProfile) => {
     setProfile(userProfile);

@@ -1,214 +1,345 @@
 'use client';
 
-import React, { useState } from 'react';
-import { UserRole, UserProfile } from '@/types';
-import { authenticateUser, registerUser } from '@/lib/services/databaseService';
+import React, { useMemo, useState } from 'react';
+import { UserProfile, UserRole } from '@/types';
+import {
+  authenticateUser,
+  registerUser,
+  loginAsDemo,
+  DEMO_MODE_ENABLED,
+} from '@/lib/services/databaseService';
+import { DEMO_ACCOUNTS, DEMO_PASSWORD } from '@/lib/demo/data';
+import Icon, { IconName } from './ui/Icon';
+import Logo from './ui/Logo';
 
 interface LoginProps {
   onLogin: (profile: UserProfile) => void;
   schoolName: string;
 }
 
-const Login: React.FC<LoginProps> = ({ onLogin, schoolName }) => {
+const ROLES: { id: UserRole; label: string; icon: IconName }[] = [
+  { id: 'student', label: 'Student', icon: 'graduation' },
+  { id: 'teacher', label: 'Teacher', icon: 'users' },
+  { id: 'parent', label: 'Parent', icon: 'home' },
+  { id: 'academic', label: 'Academic', icon: 'clipboard' },
+  { id: 'admin', label: 'Admin', icon: 'shield' },
+];
+
+const HIGHLIGHTS = [
+  { icon: 'brain' as IconName, title: 'NCDC-aligned AI tutor', copy: 'Explanations, worked examples and instant quizzes for every O-Level unit.' },
+  { icon: 'compass' as IconName, title: 'Mastery, not guesswork', copy: 'A living syllabus map shows exactly what is secure and what needs work.' },
+  { icon: 'users' as IconName, title: 'Everyone in the loop', copy: 'Teachers, guardians and school leaders see the same honest picture.' },
+];
+
+export default function Login({ onLogin, schoolName }: LoginProps) {
   const [isRegistering, setIsRegistering] = useState(false);
   const [email, setEmail] = useState('');
   const [fullName, setFullName] = useState('');
   const [role, setRole] = useState<UserRole>('student');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
-  const selectRoleAndPopulate = (selectedRole: UserRole) => {
-    setRole(selectedRole);
-    setError('');
+  const activeRole = useMemo(() => ROLES.find((r) => r.id === role)!, [role]);
+
+  const handleDemo = (demoRole: UserRole) => {
+    const profile = loginAsDemo(demoRole);
+    onLogin(profile);
   };
 
   const handleAuthAction = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setSuccessMsg('');
-    
-    if (!email) return setError('Email is required');
-    if (!password) return setError('Password is required');
-    if (isRegistering && !fullName) return setError('Full Name is required');
-    
-    setIsLoading(true);
 
+    if (!email.trim()) return setError('Enter your school email or institutional ID.');
+    if (!password) return setError('Enter your password.');
+    if (isRegistering && !fullName.trim()) return setError('Enter your full name.');
+
+    setIsLoading(true);
     try {
       if (isRegistering) {
-        const result = await registerUser(fullName, email, password, role);
+        const result = await registerUser(fullName.trim(), email.trim(), password, role);
         if (result.success && result.profile) {
           if (role === 'student') {
-            setSuccessMsg(`Registration received. Student ID: ${result.profile.studentCode}. Pending approval.`);
+            setSuccessMsg(`Registration received. Your Soma code is ${result.profile.studentCode}. An academic director will approve it shortly.`);
             setIsRegistering(false);
           } else if (role === 'teacher') {
-            setSuccessMsg(`Teacher account initialized. You can now sign in.`);
+            setSuccessMsg('Teacher account created. You can sign in now.');
             setIsRegistering(false);
           } else {
             onLogin(result.profile);
           }
         } else {
-          setError(result.message || 'Registration failed');
+          setError(result.message || 'We could not create that account.');
         }
       } else {
-        const profile = await authenticateUser(email, password);
-        if (profile) {
-          if (profile.role === 'student' && profile.status === 'PENDING') {
-            setError('Account pending academic approval.');
-          } else {
-            onLogin(profile);
-          }
+        const profile = await authenticateUser(email.trim(), password);
+        if (!profile) {
+          setError('Those credentials do not match an account. Try a demo profile below.');
+        } else if (profile.role === 'student' && profile.status === 'PENDING') {
+          setError('This student profile is still awaiting academic approval.');
         } else {
-          setError('Invalid login credentials.');
+          onLogin(profile);
         }
       }
-    } catch (err) {
-      setError('System connection error.');
+    } catch {
+      setError('We could not reach the sign-in service. Check your connection and try again.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  const roles: { id: UserRole; label: string; icon: string }[] = [
-    { id: 'student', label: 'Student', icon: '👨‍🎓' },
-    { id: 'teacher', label: 'Teacher', icon: '👩‍🏫' },
-    { id: 'parent', label: 'Parent', icon: '🏡' },
-    { id: 'academic', label: 'Academic', icon: '📋' },
-    { id: 'admin', label: 'Admin', icon: '🛡️' },
-  ];
-
   return (
-    <div className="min-h-screen w-full flex flex-col items-center justify-center bg-blue-900 relative p-4 md:p-8 overflow-hidden">
-      <div className="absolute inset-0 pointer-events-none african-pattern opacity-10" />
-      
-      <div className="flex flex-col items-center mb-8 z-10 animate-in fade-in slide-in-from-top-4 duration-700">
-        <div className="w-24 h-24 bg-white rounded-3xl shadow-2xl flex items-center justify-center mb-4 border-4 border-white/20 transform hover:scale-105 transition-transform duration-300">
-           <svg className="w-16 h-16 text-blue-900" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 2L4 5V11C4 16.06 7.41 20.74 12 22C16.59 20.74 20 16.06 20 11V5L12 2Z" fill="currentColor" fillOpacity="0.1" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
-              <path d="M12 6V18M12 6L9 9M12 6L15 9M12 18L9 15M12 18L15 15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-              <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.5"/>
-           </svg>
-        </div>
-        <h1 className="text-4xl font-black text-white tracking-tight uppercase drop-shadow-md">Soma-Agent</h1>
-        <p className="text-white/60 font-bold text-[10px] uppercase tracking-[0.4em] mt-1 text-center">{schoolName}</p>
-      </div>
+    <div className="min-h-dvh bg-surface lg:grid lg:grid-cols-[1.05fr_1fr]">
+      {/* Brand panel */}
+      <section className="relative overflow-hidden bg-uni-blue-950 px-6 pb-10 pt-8 text-white sm:px-10 lg:flex lg:flex-col lg:justify-between lg:px-14 lg:py-12">
+        <div className="pointer-events-none absolute inset-0 bg-mesh-dark opacity-90" />
+        <div className="pointer-events-none absolute -bottom-24 -right-20 h-80 w-80 rounded-full border border-white/5" />
+        <div className="pointer-events-none absolute -bottom-10 -right-6 h-56 w-56 rounded-full border border-crane-yellow/10" />
 
-      <div className="w-full max-w-[460px] z-10">
-        <div className="bg-white rounded-[2.5rem] shadow-[0_35px_80px_-15px_rgba(0,0,0,0.4)] p-8 md:p-12 animate-in fade-in zoom-in-95 duration-500 relative overflow-hidden">
-          
-          <div className="text-center mb-10">
-            <h2 className="text-3xl font-bold text-slate-800 tracking-tight">
-              {isRegistering ? 'Enroll Today' : 'Secure Access'}
-            </h2>
-            <p className="text-slate-400 text-xs font-semibold mt-2">Select your role</p>
+        <div className="relative">
+          <Logo variant="dark" size="md" subtitle={schoolName} />
+
+          <div className="mt-10 hidden max-w-lg lg:block">
+            <p className="mb-3 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-crane-yellow">
+              <span className="h-1.5 w-1.5 rounded-full bg-leaf-green" />
+              Term II · Learning platform
+            </p>
+            <h1 className="font-display text-[42px] font-extrabold leading-[1.06] tracking-tight text-white">
+              Every learner,
+              <br />
+              <span className="text-gradient-gold">a mastery story.</span>
+            </h1>
+            <p className="mt-4 max-w-md text-[14px] leading-relaxed text-slate-400">
+              Soma-Agent brings the Ugandan O-Level syllabus, an AI study partner and honest progress
+              reporting into one calm workspace — for students, teachers and guardians.
+            </p>
+
+            <div className="mt-9 space-y-4">
+              {HIGHLIGHTS.map((item) => (
+                <div key={item.title} className="flex gap-3.5">
+                  <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.06] text-crane-yellow">
+                    <Icon name={item.icon} size={18} />
+                  </div>
+                  <div>
+                    <p className="text-[13px] font-semibold text-white">{item.title}</p>
+                    <p className="mt-0.5 text-[11.5px] leading-relaxed text-slate-500">{item.copy}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
 
-          <div className="grid grid-cols-5 gap-3 mb-10">
-            {roles.map((r) => (
-              <button
-                key={r.id}
-                type="button"
-                onClick={() => selectRoleAndPopulate(r.id)}
-                className={`flex flex-col items-center justify-center py-4 rounded-2xl border-2 transition-all duration-300 group ${role === r.id ? 'bg-blue-900 border-blue-900 shadow-lg scale-110 z-20' : 'bg-slate-50 border-slate-50 hover:bg-slate-100'}`}
-              >
-                <span className="text-2xl mb-1.5 transition-transform group-hover:scale-110">{r.icon}</span>
-                <span className={`text-[8px] font-black uppercase tracking-tighter text-center px-1 ${role === r.id ? 'text-white' : 'text-slate-400'}`}>
-                  {r.label}
-                </span>
-              </button>
+          <div className="mt-8 flex flex-wrap gap-2 lg:hidden">
+            {['NCDC syllabus', 'AI tutor', 'Live progress'].map((tag) => (
+              <span key={tag} className="rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-300">
+                {tag}
+              </span>
             ))}
+          </div>
+        </div>
+
+        <div className="relative mt-10 hidden items-center justify-between border-t border-white/10 pt-5 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500 lg:flex">
+          <span>{schoolName}</span>
+          <span className="flex items-center gap-2 text-slate-400">
+            <span className="h-1.5 w-1.5 rounded-full bg-leaf-green" /> All systems ready
+          </span>
+        </div>
+      </section>
+
+      {/* Form panel */}
+      <section className="flex items-center justify-center px-4 py-8 sm:px-8 lg:py-12">
+        <div className="w-full max-w-[460px] animate-fade-up">
+          <div className="mb-7">
+            <p className="eyebrow">{isRegistering ? 'Join the platform' : 'Welcome back'}</p>
+            <h2 className="mt-2 font-display text-[28px] font-extrabold tracking-tight text-uni-blue">
+              {isRegistering ? 'Create your profile' : 'Sign in to Soma'}
+            </h2>
+            <p className="mt-2 text-[13px] leading-relaxed text-slate-500">
+              {isRegistering
+                ? 'Students are approved by the academic office before results unlock.'
+                : 'Choose your role, then continue with your school account.'}
+            </p>
+          </div>
+
+          <div className="mb-6 grid grid-cols-5 gap-1.5 rounded-2xl border border-slate-200/80 bg-white p-1.5 shadow-soft">
+            {ROLES.map((r) => {
+              const active = role === r.id;
+              return (
+                <button
+                  key={r.id}
+                  type="button"
+                  onClick={() => {
+                    setRole(r.id);
+                    setError('');
+                  }}
+                  className={`flex flex-col items-center gap-1.5 rounded-xl px-1 py-2.5 transition-all ${
+                    active ? 'bg-uni-blue text-white shadow-sm' : 'text-slate-400 hover:bg-slate-50 hover:text-uni-blue'
+                  }`}
+                  aria-pressed={active}
+                >
+                  <Icon name={r.icon} size={18} />
+                  <span className="text-[9px] font-bold uppercase tracking-[0.04em]">{r.label}</span>
+                </button>
+              );
+            })}
           </div>
 
           {successMsg && (
-            <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-2xl text-green-600 text-xs font-bold text-center animate-in slide-in-from-top-2">
-              {successMsg}
+            <div className="mb-5 flex gap-2.5 rounded-2xl border border-leaf-green/20 bg-leaf-green/[0.06] p-3.5 text-left">
+              <Icon name="check-circle" size={16} className="mt-0.5 shrink-0 text-leaf-green" />
+              <p className="text-[11.5px] font-medium leading-relaxed text-leaf-green-800">{successMsg}</p>
             </div>
           )}
 
-          <form onSubmit={handleAuthAction} className="space-y-5">
+          <form onSubmit={handleAuthAction} className="space-y-4">
             {isRegistering && (
-              <div className="space-y-4 animate-in fade-in duration-300">
-                <div className="relative group">
-                  <span className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-900 transition-colors">👤</span>
-                  <input 
-                    type="text" 
+              <div>
+                <label className="label" htmlFor="fullName">Full name</label>
+                <div className="relative">
+                  <Icon name="users" size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    id="fullName"
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    placeholder="Legal Full Name" 
-                    className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:border-blue-900 outline-none transition-all font-medium text-sm text-slate-700 placeholder:text-slate-300"
+                    placeholder="e.g. Amina Nakato"
+                    className="input pl-10"
+                    autoComplete="name"
                   />
                 </div>
               </div>
             )}
 
-            <div className="relative group">
-              <span className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-900 transition-colors">✉️</span>
-              <input 
-                type="email" 
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="Institutional ID / Email" 
-                className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:border-blue-900 outline-none transition-all font-medium text-sm text-slate-700 placeholder:text-slate-300"
-              />
+            <div>
+              <label className="label" htmlFor="email">School email</label>
+              <div className="relative">
+                <Icon name="mail" size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  id="email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@gayaza.ac.ug"
+                  className="input pl-10"
+                  autoComplete="email"
+                />
+              </div>
             </div>
 
-            <div className="relative group">
-              <span className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-300 group-focus-within:text-blue-900 transition-colors">🔒</span>
-              <input 
-                type="password" 
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Access Pin / Password" 
-                className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:border-blue-900 outline-none transition-all font-medium text-sm text-slate-700 placeholder:text-slate-300"
-              />
+            <div>
+              <label className="label" htmlFor="password">Password</label>
+              <div className="relative">
+                <Icon name="lock" size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Your password"
+                  className="input pl-10 pr-11"
+                  autoComplete={isRegistering ? 'new-password' : 'current-password'}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-uni-blue"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  <Icon name={showPassword ? 'eye-off' : 'eye'} size={16} />
+                </button>
+              </div>
             </div>
 
             {error && (
-              <div className="p-4 bg-red-50 border border-red-100 rounded-2xl text-red-500 text-[11px] font-bold text-center animate-shake">
-                {error}
+              <div className="flex gap-2.5 rounded-2xl border border-red-100 bg-red-50 p-3.5">
+                <Icon name="alert" size={16} className="mt-0.5 shrink-0 text-red-500" />
+                <p className="text-[11.5px] font-medium leading-relaxed text-red-600">{error}</p>
               </div>
             )}
 
-            <button 
-              type="submit" 
-              disabled={isLoading}
-              className="w-full py-5 bg-blue-900 text-white font-black uppercase tracking-[0.25em] rounded-[1.25rem] shadow-2xl shadow-blue-900/30 hover:bg-blue-800 transform active:scale-[0.98] transition-all disabled:opacity-50 text-[11px] flex items-center justify-center gap-4 mt-6"
-            >
+            <button type="submit" disabled={isLoading} className="btn-primary btn-lg mt-1 w-full">
               {isLoading ? (
-                <div className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                <>
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                  Please wait…
+                </>
               ) : (
-                <span>{isRegistering ? 'Initialize Account' : `Enter as ${role}`}</span>
+                <>
+                  {isRegistering ? 'Create account' : `Continue as ${activeRole.label.toLowerCase()}`}
+                  <Icon name="arrow-right" size={16} />
+                </>
               )}
             </button>
           </form>
 
-          <div className="mt-10 pt-8 border-t border-slate-50 text-center">
-            <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">
-              {isRegistering ? 'Already registered?' : "Don't have a profile?"}{' '}
-              <button 
-                onClick={() => {
-                  setIsRegistering(!isRegistering);
-                  setError('');
-                }}
-                className="text-blue-900 font-black hover:underline ml-1"
-              >
-                {isRegistering ? 'Login Instead' : 'Create Profile'}
-              </button>
-            </p>
-          </div>
-        </div>
+          <p className="mt-4 text-center text-[11.5px] font-medium text-slate-500">
+            {isRegistering ? 'Already have an account?' : 'New to Soma-Agent?'}{' '}
+            <button
+              type="button"
+              onClick={() => {
+                setIsRegistering((v) => !v);
+                setError('');
+                setSuccessMsg('');
+              }}
+              className="font-bold text-uni-blue underline decoration-crane-yellow decoration-2 underline-offset-2 hover:text-uni-blue-700"
+            >
+              {isRegistering ? 'Sign in instead' : 'Create a profile'}
+            </button>
+          </p>
 
-        <div className="mt-10 text-center flex flex-col items-center gap-5">
-          <div className="flex items-center gap-3 px-6 py-2 bg-white/10 rounded-full border border-white/5 backdrop-blur-sm">
-             <span className="w-2 h-2 bg-green-500 rounded-full shadow-[0_0_10px_rgba(76,175,80,0.8)] animate-pulse" />
-             <p className="text-[10px] text-white font-black uppercase tracking-[0.2em]">NCDC Hub Online • Secure Session</p>
-          </div>
-          <p className="text-[9px] text-white/30 font-bold uppercase tracking-[0.5em]">Orchestrator Platform v3.0.0</p>
+          {DEMO_MODE_ENABLED && (
+            <div className="mt-8 rounded-3xl border border-crane-yellow/30 bg-crane-yellow/[0.07] p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.14em] text-crane-yellow-800">
+                    <Icon name="bolt" size={13} /> Demo access
+                  </p>
+                  <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
+                    Explore any role instantly. Password <span className="font-mono font-semibold text-uni-blue">{DEMO_PASSWORD}</span>
+                  </p>
+                </div>
+                <span className="badge-gold">no setup</span>
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {ROLES.map((r) => (
+                  <button
+                    key={r.id}
+                    type="button"
+                    onClick={() => handleDemo(r.id)}
+                    className="group flex items-center justify-between gap-2 rounded-xl border border-white bg-white/90 px-3 py-2.5 text-left transition-all hover:border-uni-blue/25 hover:bg-white hover:shadow-sm"
+                  >
+                    <span className="flex min-w-0 items-center gap-2.5">
+                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-uni-blue/5 text-uni-blue">
+                        <Icon name={r.icon} size={15} />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-[11.5px] font-bold text-uni-blue">
+                          {DEMO_ACCOUNTS[r.id].fullName}
+                        </span>
+                        <span className="block text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-400">
+                          {r.label}
+                        </span>
+                      </span>
+                    </span>
+                    <Icon
+                      name="arrow-up-right"
+                      size={14}
+                      className="shrink-0 text-slate-300 transition-colors group-hover:text-uni-blue"
+                    />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <p className="mt-6 text-center text-[9.5px] leading-relaxed text-slate-400">
+            Protected school workspace · {schoolName} · Built for the Ugandan NCDC curriculum
+          </p>
         </div>
-      </div>
+      </section>
     </div>
   );
-};
-
-export default Login;
+}

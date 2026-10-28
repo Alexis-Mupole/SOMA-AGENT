@@ -6,7 +6,7 @@ import './globals.css';
 export const metadata: Metadata = {
   title: {
     default: 'Soma-Agent — AI Learning for Ugandan Schools',
-    template: '%s · Soma-Agent',
+    template: '%s | Soma-Agent',
   },
   description:
     'Soma-Agent is an AI-powered learning platform for Ugandan O-Level students, teachers and parents — NCDC-aligned tutoring, mastery tracking and school analytics.',

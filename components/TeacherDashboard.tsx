@@ -1,9 +1,21 @@
-
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Resource, SchoolInfo, UserProfile, StudentProgress, Exam } from '@/types';
-import { fetchTeacherCourses, fetchStudentProgress, sendStudentFeedback, scheduleExam, fetchUpcomingExams } from '@/lib/services/databaseService';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Exam, Resource, SchoolInfo, StudentProgress, UserProfile } from '@/types';
+import {
+  fetchStudentProgress,
+  fetchTeacherCourses,
+  fetchUpcomingExams,
+  scheduleExam,
+  sendStudentFeedback,
+} from '@/lib/services/databaseService';
+import AppShell, { NavItem } from './ui/Shell';
+import { PageHeader, SectionHeader, EmptyState } from './ui/PageHeader';
+import StatCard from './ui/StatCard';
+import Icon from './ui/Icon';
+import Modal from './ui/Modal';
+import Markdown from './ui/Markdown';
+import { useToast } from './ui/Toast';
 
 interface Props {
   onLogout: () => void;
@@ -13,262 +25,564 @@ interface Props {
   userProfile: UserProfile;
 }
 
-const TeacherDashboard: React.FC<Props> = ({ onLogout, resources, onAddResource, school, userProfile }) => {
-  const [activeTab, setActiveTab] = useState<'library' | 'students' | 'exams'>('library');
-  const [showUpload, setShowUpload] = useState(false);
-  const [newTitle, setNewTitle] = useState('');
-  const [newContent, setNewContent] = useState('');
-  const [selectedSubject, setSelectedSubject] = useState('Biology');
-  const [myCourses, setMyCourses] = useState<string[]>([]);
-  
-  const [studentList, setStudentList] = useState<StudentProgress[]>([]);
-  const [feedbackMsg, setFeedbackMsg] = useState('');
-  const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
+type Tab = 'library' | 'class' | 'assessments';
 
-  const [upcomingExams, setUpcomingExams] = useState<Exam[]>([]);
+const NAV: NavItem[] = [
+  { id: 'library', label: 'Course library', icon: 'book', short: 'Library' },
+  { id: 'class', label: 'Class progress', icon: 'users', short: 'Class' },
+  { id: 'assessments', label: 'Assessments', icon: 'calendar', short: 'Exams' },
+];
+
+const statusBadge = (status: StudentProgress['status']) =>
+  status === 'excellent' ? 'badge-green' : status === 'at-risk' ? 'badge-red' : 'badge-gold';
+
+const statusLabel = (status: StudentProgress['status']) =>
+  status === 'excellent' ? 'Excelling' : status === 'at-risk' ? 'At risk' : 'On track';
+
+const prettyDate = (iso: string) =>
+  new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+
+export default function TeacherDashboard({ onLogout, resources, onAddResource, school, userProfile }: Props) {
+  const { toast } = useToast();
+  const [tab, setTab] = useState<Tab>('library');
+  const [courses, setCourses] = useState<string[]>([]);
+  const [subject, setSubject] = useState('Biology');
+  const [students, setStudents] = useState<StudentProgress[]>([]);
+  const [exams, setExams] = useState<Exam[]>([]);
+  const [query, setQuery] = useState('');
+
+  const [publishing, setPublishing] = useState(false);
+  const [title, setTitle] = useState('');
+  const [unit, setUnit] = useState('');
+  const [content, setContent] = useState('');
+
+  const [coaching, setCoaching] = useState<StudentProgress | null>(null);
+  const [message, setMessage] = useState('');
+  const [drafting, setDrafting] = useState(false);
+
   const [examTitle, setExamTitle] = useState('');
   const [examDate, setExamDate] = useState('');
 
   useEffect(() => {
-    const loadInit = async () => {
-      const courses = await fetchTeacherCourses(userProfile.id);
-      setMyCourses(courses);
-      if (courses.length > 0) setSelectedSubject(courses[0]);
+    let active = true;
+    const load = async () => {
+      const list = await fetchTeacherCourses(userProfile.id);
+      if (!active) return;
+      setCourses(list);
+      if (list.length && !list.includes(subject)) setSubject(list[0]);
     };
-    loadInit();
+    load();
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userProfile.id]);
 
   useEffect(() => {
-    const loadSubjectData = async () => {
-      const progress = await fetchStudentProgress(selectedSubject);
-      setStudentList(progress);
-      const exams = await fetchUpcomingExams(selectedSubject);
-      setUpcomingExams(exams);
+    let active = true;
+    const load = async () => {
+      const [progress, upcoming] = await Promise.all([
+        fetchStudentProgress(subject),
+        fetchUpcomingExams(undefined, subject),
+      ]);
+      if (!active) return;
+      setStudents(progress);
+      setExams(upcoming);
     };
-    loadSubjectData();
-  }, [selectedSubject]);
+    load();
+    return () => {
+      active = false;
+    };
+  }, [subject]);
 
-  const handlePublishResource = (e: React.FormEvent) => {
+  const subjectResources = useMemo(() => resources.filter((r) => r.subject === subject), [resources, subject]);
+
+  const classStats = useMemo(() => {
+    if (!students.length) return { average: 0, atRisk: 0, excellent: 0 };
+    return {
+      average: Math.round(students.reduce((sum, s) => sum + s.mastery, 0) / students.length),
+      atRisk: students.filter((s) => s.status === 'at-risk').length,
+      excellent: students.filter((s) => s.status === 'excellent').length,
+    };
+  }, [students]);
+
+  const visibleStudents = useMemo(() => {
+    const search = query.trim().toLowerCase();
+    return students.filter((s) => !search || s.studentName.toLowerCase().includes(search));
+  }, [students, query]);
+
+  const publish = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTitle) return;
+    if (!title.trim()) return;
     onAddResource({
-      id: Date.now().toString(),
-      title: newTitle,
-      content: newContent,
-      unit: 'Unit ' + (resources.length + 1),
+      id: `res-${Date.now()}`,
+      title: title.trim(),
+      content: content.trim(),
+      unit: unit.trim() || 'New unit',
       fileSize: '1.2 MB',
-      subject: selectedSubject
+      subject,
+      teacherName: userProfile.fullName,
+      readMinutes: Math.max(4, Math.round(content.split(/\s+/).length / 180)),
     });
-    setNewTitle(''); setNewContent(''); setShowUpload(false);
+    setPublishing(false);
+    setTitle('');
+    setUnit('');
+    setContent('');
+    toast('Lesson published', { description: `${subject} · visible to every class instantly.` });
   };
 
-  const handleSendFeedback = async () => {
-    if (!selectedStudentId || !feedbackMsg) return;
-    await sendStudentFeedback(userProfile.fullName, selectedStudentId, selectedSubject, feedbackMsg);
-    setFeedbackMsg(''); setSelectedStudentId(null);
-    alert("Feedback sent successfully!");
+  const draftFeedback = async () => {
+    if (!coaching) return;
+    setDrafting(true);
+    try {
+      const res = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: `Draft teacher feedback for ${coaching.studentName}, who is at ${coaching.mastery}% mastery in ${subject}.`,
+          context: `Teacher ${userProfile.fullName} at ${school.name}. Student last active ${coaching.lastActive}.`,
+        }),
+      });
+      const data = await res.json();
+      setMessage(data.response || '');
+      toast('Draft ready', { description: 'Personalise the highlighted section before sending.', tone: 'gold' });
+    } catch {
+      toast('Could not draft right now', { description: 'Write the message manually and try again.', tone: 'error' });
+    } finally {
+      setDrafting(false);
+    }
   };
 
-  const handleCreateExam = async (e: React.FormEvent) => {
+  const deliver = async () => {
+    if (!coaching || !message.trim()) return;
+    await sendStudentFeedback(userProfile.id, coaching.studentId, subject, message.trim(), userProfile.fullName);
+    setCoaching(null);
+    setMessage('');
+    toast('Guidance delivered', { description: `${coaching.studentName} will see it in their mentor tab.` });
+  };
+
+  const createExam = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!examTitle || !examDate) return;
-    const n = await scheduleExam({
-      title: examTitle,
-      date: examDate,
-      subject: selectedSubject,
-      duration: '1 Hour',
-      status: 'upcoming'
-    }, userProfile.schoolId);
-    if (n) setUpcomingExams(prev => [...prev, n]);
-    setExamTitle(''); setExamDate('');
-    alert("Exam scheduled and students notified.");
+    if (!examTitle.trim() || !examDate) return;
+    const created = await scheduleExam(
+      {
+        title: examTitle.trim(),
+        date: new Date(examDate).toISOString(),
+        subject,
+        duration: '1 hour 30 min',
+        status: 'upcoming',
+      },
+      userProfile.schoolId
+    );
+    if (created) setExams((prev) => [...prev, created].sort((a, b) => +new Date(a.date) - +new Date(b.date)));
+    setExamTitle('');
+    setExamDate('');
+    toast('Assessment scheduled', { description: 'Students and guardians have been notified.' });
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-slate-50 pb-10">
-      <header className="bg-white border-b border-slate-200 p-4 md:p-6 sticky top-0 z-20 shadow-sm">
-        <div className="max-w-7xl mx-auto flex justify-between items-center">
-          <div className="flex items-center space-x-3 md:space-x-4">
-             <div className="w-10 h-10 md:w-12 md:h-12 bg-uni-blue rounded-2xl flex items-center justify-center text-white font-bold text-lg shadow-lg">T</div>
-             <div>
-                <h1 className="font-montserrat font-bold text-uni-blue text-sm md:text-lg">{userProfile.fullName}</h1>
-                <p className="text-[8px] md:text-[10px] text-slate-500 font-bold uppercase tracking-widest">{school.name}</p>
-             </div>
+    <AppShell
+      roleLabel="Teacher"
+      nav={NAV}
+      active={tab}
+      onNavigate={(id) => setTab(id as Tab)}
+      user={userProfile}
+      school={school}
+      onLogout={onLogout}
+      accent="green"
+      aside={
+        <div className="mb-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+          <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-slate-500">Active subject</p>
+          <div className="mt-2 flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-leaf-green" />
+            <p className="text-[13px] font-semibold text-white">{subject}</p>
           </div>
-          <div className="flex items-center space-x-2 md:space-x-4">
-            <select 
-              value={selectedSubject} 
-              onChange={e => setSelectedSubject(e.target.value)}
-              className="bg-slate-50 border border-slate-200 px-3 py-1.5 md:px-4 md:py-2 rounded-xl text-[10px] md:text-xs font-bold outline-none"
-            >
-              {myCourses.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <button onClick={onLogout} className="bg-red-50 text-red-500 p-2 md:p-3 rounded-xl md:rounded-2xl hover:bg-red-500 hover:text-white transition-all">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
-            </button>
-          </div>
+          <p className="mt-1.5 text-[10.5px] leading-relaxed text-slate-500">
+            {subjectResources.length} notes · {students.length} learners
+          </p>
         </div>
-      </header>
+      }
+    >
+      <PageHeader
+        eyebrow={`${school.name} · Staff workspace`}
+        title={`Good to see you, ${userProfile.fullName.split(' ')[0]}`}
+        description="Publish notes, spot mastery gaps early and keep every guardian in the loop."
+        actions={
+          <>
+            <select value={subject} onChange={(e) => setSubject(e.target.value)} className="select w-auto min-w-[140px]">
+              {(courses.length ? courses : ['Biology']).map((course) => (
+                <option key={course}>{course}</option>
+              ))}
+            </select>
+            <button onClick={() => setPublishing(true)} className="btn-primary">
+              <Icon name="plus" size={15} /> New lesson
+            </button>
+          </>
+        }
+      />
 
-      {/* Teacher Navigation Tabs */}
-      <div className="bg-white border-b border-slate-100 overflow-x-auto scrollbar-hide">
-         <div className="max-w-7xl mx-auto px-6 flex space-x-6 md:space-x-8 min-w-max">
-            <button onClick={() => setActiveTab('library')} className={`py-4 text-[10px] md:text-xs font-black uppercase tracking-widest border-b-4 transition-all ${activeTab === 'library' ? 'border-uni-blue text-uni-blue' : 'border-transparent text-slate-400'}`}>Library</button>
-            <button onClick={() => setActiveTab('students')} className={`py-4 text-[10px] md:text-xs font-black uppercase tracking-widest border-b-4 transition-all ${activeTab === 'students' ? 'border-uni-blue text-uni-blue' : 'border-transparent text-slate-400'}`}>Class Progress</button>
-            <button onClick={() => setActiveTab('exams')} className={`py-4 text-[10px] md:text-xs font-black uppercase tracking-widest border-b-4 transition-all ${activeTab === 'exams' ? 'border-uni-blue text-uni-blue' : 'border-transparent text-slate-400'}`}>Assessments</button>
-         </div>
+      <div className="mb-6 grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+        <StatCard label="Learners" value={students.length} icon="users" tone="blue" hint={`${subject} · Senior 3–4`} />
+        <StatCard label="Average mastery" value={`${classStats.average}%`} icon="target" tone="green" progress={classStats.average} />
+        <StatCard label="Excelling" value={classStats.excellent} icon="award" tone="gold" hint="At 80% or above" />
+        <StatCard label="Needs support" value={classStats.atRisk} icon="alert" tone="rose" hint="Below 50% mastery" />
       </div>
 
-      <main className="p-4 md:p-8 max-w-7xl mx-auto w-full">
-        {activeTab === 'library' && (
-          <div className="space-y-6 md:space-y-8 animate-in fade-in">
-             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <h2 className="text-xl md:text-2xl font-bold text-uni-blue">Course Resources</h2>
-                <button onClick={() => setShowUpload(true)} className="w-full sm:w-auto bg-leaf-green text-white px-6 py-4 md:py-3 rounded-2xl font-bold text-xs shadow-lg hover:scale-105 transition-transform flex items-center justify-center space-x-2">
-                  <span>➕</span> <span>New Lesson Notes</span>
+      {tab === 'library' && (
+        <div className="space-y-5">
+          <SectionHeader
+            title={`${subject} course library`}
+            description="Everything your classes can see, in one place."
+            actions={
+              <button onClick={() => setPublishing(true)} className="btn-secondary btn-sm">
+                <Icon name="plus" size={13} /> Add note
+              </button>
+            }
+          />
+          {subjectResources.length === 0 ? (
+            <EmptyState
+              icon="book"
+              title="No notes for this subject yet"
+              description="Publish your first lesson note and it will appear in every learner's library immediately."
+              action={
+                <button onClick={() => setPublishing(true)} className="btn-primary btn-sm">
+                  <Icon name="plus" size={13} /> Publish note
                 </button>
-             </div>
-             
-             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
-                {resources.filter(r => r.subject === selectedSubject).map(res => (
-                  <div key={res.id} className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm group hover:border-uni-blue transition-all">
-                    <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-2xl mb-4">📄</div>
-                    <h4 className="font-bold text-slate-800 text-lg mb-1">{res.title}</h4>
-                    <p className="text-xs text-slate-400 font-medium mb-6">{res.unit} • {res.fileSize}</p>
-                    <div className="flex justify-between items-center">
-                       <span className="text-[9px] md:text-[10px] bg-uni-blue/10 text-uni-blue px-3 py-1 rounded-full font-bold">LIVE</span>
-                       <button className="text-[9px] md:text-[10px] font-bold text-red-400">Archive</button>
+              }
+            />
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {subjectResources.map((resource) => (
+                <article key={resource.id} className="card flex flex-col p-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="grid h-10 w-10 place-items-center rounded-xl bg-uni-blue/5 text-uni-blue">
+                      <Icon name="file" size={17} />
+                    </span>
+                    <span className="badge-green">Live</span>
+                  </div>
+                  <h3 className="mt-4 font-display text-[15px] font-bold leading-snug text-uni-blue">{resource.title}</h3>
+                  <p className="mt-1 text-[11px] font-medium text-slate-400">
+                    {resource.unit} · {resource.fileSize}
+                  </p>
+                  <p className="mt-2 line-clamp-2 text-[11.5px] leading-relaxed text-slate-500">
+                    {resource.content.replace(/[#*`>]/g, '').slice(0, 130)}…
+                  </p>
+                  <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3.5">
+                    <span className="text-[10px] font-semibold text-slate-400">
+                      {resource.teacherName || userProfile.fullName}
+                    </span>
+                    <button
+                      onClick={() =>
+                        toast('Resource archived (demo)', {
+                          description: `${resource.title} would be hidden from learners.`,
+                          tone: 'info',
+                        })
+                      }
+                      className="text-[10px] font-bold uppercase tracking-[0.1em] text-slate-400 transition-colors hover:text-red-500"
+                    >
+                      Archive
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'class' && (
+        <div className="space-y-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="font-display text-lg font-bold text-uni-blue">Class progress</h2>
+              <p className="mt-1 text-xs text-slate-500">Live mastery for {subject}, updated after every practice session.</p>
+            </div>
+            <div className="relative sm:w-64">
+              <Icon name="search" size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Find a student…"
+                className="input py-2.5 pl-9"
+              />
+            </div>
+          </div>
+
+          <div className="card overflow-hidden">
+            <div className="hidden grid-cols-[1.6fr_1.2fr_0.9fr_auto] gap-4 border-b border-slate-100 bg-slate-50/70 px-5 py-3 md:grid">
+              {['Student', 'Mastery', 'Last active', ''].map((head, i) => (
+                <p key={i} className="text-[9.5px] font-bold uppercase tracking-[0.12em] text-slate-400">
+                  {head}
+                </p>
+              ))}
+            </div>
+
+            {visibleStudents.length === 0 ? (
+              <EmptyState icon="users" title="No students match" description="Try another name or clear the search." />
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {visibleStudents.map((student) => (
+                  <div
+                    key={student.studentId}
+                    className="grid gap-3 px-4 py-4 transition-colors hover:bg-slate-50/60 md:grid-cols-[1.6fr_1.2fr_0.9fr_auto] md:items-center md:gap-4 md:px-5"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-uni-blue/5 text-[10px] font-extrabold text-uni-blue">
+                        {student.studentName
+                          .split(' ')
+                          .slice(0, 2)
+                          .map((n) => n[0])
+                          .join('')}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate text-[12.5px] font-bold text-uni-blue">{student.studentName}</p>
+                        <span className={`badge mt-1 ${statusBadge(student.status)}`}>{statusLabel(student.status)}</span>
+                      </div>
                     </div>
+
+                    <div className="flex items-center gap-2.5">
+                      <div className="progress-track flex-1">
+                        <div
+                          className={student.mastery >= 80 ? 'progress-fill-green' : student.mastery >= 50 ? 'progress-fill-gold' : 'h-full rounded-full bg-red-400'}
+                          style={{ width: `${student.mastery}%` }}
+                        />
+                      </div>
+                      <span className="w-9 text-right text-[11.5px] font-bold text-uni-blue">{student.mastery}%</span>
+                    </div>
+
+                    <p className="text-[11px] font-medium text-slate-400">{student.lastActive}</p>
+
+                    <button
+                      onClick={() => {
+                        setCoaching(student);
+                        setMessage('');
+                      }}
+                      className="btn-secondary btn-sm justify-self-start md:justify-self-end"
+                    >
+                      <Icon name="chat" size={13} /> Guidance
+                    </button>
                   </div>
                 ))}
-             </div>
-          </div>
-        )}
-
-        {activeTab === 'students' && (
-          <div className="space-y-6 animate-in slide-in-from-right-4">
-             <div className="bg-white rounded-[32px] md:rounded-[40px] border border-slate-200 shadow-sm overflow-hidden overflow-x-auto">
-                <table className="w-full text-left min-w-[600px]">
-                   <thead className="bg-slate-50 border-b border-slate-200">
-                      <tr>
-                        <th className="px-6 md:px-8 py-4 text-[9px] md:text-[10px] font-black uppercase text-slate-400 tracking-widest">Student Name</th>
-                        <th className="px-6 md:px-8 py-4 text-[9px] md:text-[10px] font-black uppercase text-slate-400 tracking-widest">Mastery</th>
-                        <th className="px-6 md:px-8 py-4 text-[9px] md:text-[10px] font-black uppercase text-slate-400 tracking-widest">Last Activity</th>
-                        <th className="px-6 md:px-8 py-4 text-[9px] md:text-[10px] font-black uppercase text-slate-400 tracking-widest text-right">Actions</th>
-                      </tr>
-                   </thead>
-                   <tbody className="divide-y divide-slate-100">
-                      {studentList.map(s => (
-                        <tr key={s.studentId} className="hover:bg-slate-50 transition-colors group">
-                           <td className="px-6 md:px-8 py-5 md:py-6">
-                              <p className="font-bold text-slate-800 text-sm">{s.studentName}</p>
-                              <span className={`text-[8px] font-bold px-2 py-0.5 rounded ${s.status === 'excellent' ? 'bg-leaf-green/10 text-leaf-green' : s.status === 'at-risk' ? 'bg-red-50 text-red-500' : 'bg-crane-yellow/10 text-crane-yellow-dark'}`}>{s.status.toUpperCase()}</span>
-                           </td>
-                           <td className="px-6 md:px-8 py-5 md:py-6">
-                              <div className="flex items-center space-x-3">
-                                 <div className="flex-1 bg-slate-100 h-1.5 w-16 md:w-24 rounded-full overflow-hidden">
-                                    <div className="bg-uni-blue h-full rounded-full" style={{width: `${s.mastery}%`}} />
-                                 </div>
-                                 <span className="text-[10px] font-mono font-bold text-slate-500">{s.mastery}%</span>
-                              </div>
-                           </td>
-                           <td className="px-6 md:px-8 py-5 md:py-6 text-[10px] text-slate-400 uppercase font-bold">{s.lastActive}</td>
-                           <td className="px-6 md:px-8 py-5 md:py-6 text-right">
-                              <button onClick={() => setSelectedStudentId(s.studentId)} className="bg-uni-blue text-white px-4 py-2 rounded-xl text-[9px] md:text-[10px] font-bold shadow-lg md:opacity-0 md:group-hover:opacity-100 transition-opacity">Guidance</button>
-                           </td>
-                        </tr>
-                      ))}
-                   </tbody>
-                </table>
-             </div>
-          </div>
-        )}
-
-        {activeTab === 'exams' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-10 animate-in fade-in">
-             <div className="bg-white p-6 md:p-10 rounded-[32px] md:rounded-[48px] border border-slate-200 shadow-xl shadow-slate-200/40">
-                <h2 className="text-xl md:text-2xl font-bold text-uni-blue mb-2">Schedule Assessment</h2>
-                <p className="text-xs md:text-sm text-slate-400 mb-8">Set specialized exams for students in {selectedSubject}.</p>
-                <form onSubmit={handleCreateExam} className="space-y-6">
-                   <div>
-                      <label className="text-[9px] md:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block px-1">Exam Title</label>
-                      <input value={examTitle} onChange={e => setExamTitle(e.target.value)} placeholder="e.g. Unit 4 Quiz" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-medium" />
-                   </div>
-                   <div>
-                      <label className="text-[9px] md:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block px-1">Date & Time</label>
-                      <input type="datetime-local" value={examDate} onChange={e => setExamDate(e.target.value)} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none" />
-                   </div>
-                   <button className="w-full bg-uni-blue text-white py-4 md:py-5 rounded-2xl font-bold text-xs md:text-sm shadow-xl shadow-uni-blue/30 transform active:scale-95 transition-all">Notify Class of Exam</button>
-                </form>
-             </div>
-
-             <div className="space-y-6">
-                <h3 className="text-lg md:text-xl font-bold text-slate-800">Scheduled Exams</h3>
-                {upcomingExams.length === 0 ? <p className="text-slate-400 italic text-sm">No exams scheduled for this term.</p> : (
-                  upcomingExams.map(e => (
-                    <div key={e.id} className="bg-slate-900 p-6 md:p-8 rounded-[32px] md:rounded-[40px] text-white border-l-8 border-crane-yellow shadow-2xl relative overflow-hidden group">
-                       <div className="absolute top-0 right-0 w-32 h-32 bg-white/5 rounded-full -mr-16 -mt-16 group-hover:scale-110 transition-transform" />
-                       <div className="relative z-10">
-                          <p className="text-[9px] md:text-[10px] font-bold text-crane-yellow uppercase tracking-widest mb-2">{e.subject} • {e.status}</p>
-                          <h4 className="text-xl md:text-2xl font-bold mb-4">{e.title}</h4>
-                          <div className="flex items-center space-x-6 text-[10px] md:text-sm opacity-60">
-                             <span className="flex items-center space-x-2">📅 <span>{e.date.split('T')[0]}</span></span>
-                             <span className="flex items-center space-x-2">⏱️ <span>{e.duration}</span></span>
-                          </div>
-                       </div>
-                    </div>
-                  ))
-                )}
-             </div>
-          </div>
-        )}
-      </main>
-
-      {/* Feedback Modal */}
-      {selectedStudentId && (
-        <div className="fixed inset-0 bg-uni-blue/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-           <div className="bg-white w-full max-w-md rounded-[32px] md:rounded-[40px] shadow-2xl p-6 md:p-10 animate-in zoom-in-95">
-              <h3 className="text-xl md:text-2xl font-bold text-uni-blue mb-2">Academic Guidance</h3>
-              <p className="text-xs md:text-sm text-slate-500 mb-6">Feedback for <b>{studentList.find(s => s.studentId === selectedStudentId)?.studentName}</b></p>
-              <textarea 
-                value={feedbackMsg} 
-                onChange={e => setFeedbackMsg(e.target.value)}
-                placeholder="Write your advice here..." 
-                className="w-full p-4 md:p-5 bg-slate-50 border border-slate-200 rounded-2xl md:rounded-3xl h-40 md:h-48 outline-none mb-6 font-medium text-slate-700 text-sm"
-              />
-              <div className="flex space-x-3 md:space-x-4">
-                 <button onClick={() => setSelectedStudentId(null)} className="flex-1 py-3 md:py-4 font-bold text-[10px] md:text-sm text-slate-400 hover:text-slate-600">Cancel</button>
-                 <button onClick={handleSendFeedback} className="flex-1 py-3 md:py-4 bg-leaf-green text-white font-bold rounded-xl md:rounded-2xl shadow-lg text-[10px] md:text-sm">Deliver Message</button>
               </div>
-           </div>
+            )}
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="card flex items-start gap-3 p-4">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-crane-yellow/15 text-crane-yellow-800">
+                <Icon name="sparkles" size={16} />
+              </span>
+              <div>
+                <p className="text-[12px] font-bold text-uni-blue">Draft guidance with Soma</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">
+                  Open a student, then let the AI draft a specific, encouraging note you can edit.
+                </p>
+              </div>
+            </div>
+            <div className="card flex items-start gap-3 p-4">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-red-50 text-red-500">
+                <Icon name="alert" size={16} />
+              </span>
+              <div>
+                <p className="text-[12px] font-bold text-uni-blue">Early intervention</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">
+                  {classStats.atRisk} learner{classStats.atRisk === 1 ? '' : 's'} below 50%. A short note this week keeps them on track.
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Upload Modal */}
-      {showUpload && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 flex items-center justify-center p-4">
-           <div className="bg-white w-full max-w-lg rounded-[32px] md:rounded-[48px] shadow-2xl p-6 md:p-12 overflow-y-auto max-h-[90vh]">
-              <h2 className="text-2xl md:text-3xl font-bold text-uni-blue mb-2">Publish Notes</h2>
-              <p className="text-xs md:text-sm text-slate-500 mb-8 md:mb-10">Shared resources are instantly visible to your classes.</p>
-              <form onSubmit={handlePublishResource} className="space-y-4 md:space-y-6">
-                 <div>
-                    <label className="text-[9px] md:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block px-1">Topic Title</label>
-                    <input value={newTitle} onChange={e => setNewTitle(e.target.value)} type="text" className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-medium text-sm" placeholder="e.g. Properties of Mammals" />
-                 </div>
-                 <div>
-                    <label className="text-[9px] md:text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 block px-1">Core Content</label>
-                    <textarea value={newContent} onChange={e => setNewContent(e.target.value)} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl h-32 md:h-40 outline-none font-medium text-sm" placeholder="Paste lesson content here..."></textarea>
-                 </div>
-                 <div className="flex space-x-3 md:space-x-4 pt-4">
-                    <button type="button" onClick={() => setShowUpload(false)} className="flex-1 py-4 font-bold text-[10px] md:text-sm text-slate-400">Cancel</button>
-                    <button type="submit" className="flex-1 py-4 bg-uni-blue text-white rounded-xl md:rounded-2xl font-bold shadow-xl shadow-uni-blue/30 text-[10px] md:text-sm">Publish Resource</button>
-                 </div>
-              </form>
-           </div>
+      {tab === 'assessments' && (
+        <div className="grid gap-6 xl:grid-cols-[1fr_1.15fr]">
+          <div className="card p-5 sm:p-6">
+            <SectionHeader title="Schedule an assessment" description={`Students in ${subject} are notified instantly.`} />
+            <form onSubmit={createExam} className="space-y-4">
+              <div>
+                <label className="label" htmlFor="examTitle">Assessment title</label>
+                <input
+                  id="examTitle"
+                  value={examTitle}
+                  onChange={(e) => setExamTitle(e.target.value)}
+                  placeholder={`e.g. ${subject} Unit 3 test`}
+                  className="input"
+                />
+              </div>
+              <div>
+                <label className="label" htmlFor="examDate">Date</label>
+                <input
+                  id="examDate"
+                  type="date"
+                  value={examDate}
+                  min={new Date().toISOString().slice(0, 10)}
+                  onChange={(e) => setExamDate(e.target.value)}
+                  className="input"
+                />
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-3.5 text-[11px] leading-relaxed text-slate-500">
+                <span className="font-bold text-uni-blue">Standard format:</span> 1 hour 30 minutes, NCDC paper structure,
+                auto-marked practice attached.
+              </div>
+              <button type="submit" className="btn-primary w-full" disabled={!examTitle.trim() || !examDate}>
+                <Icon name="calendar" size={15} /> Notify class
+              </button>
+            </form>
+          </div>
+
+          <div>
+            <SectionHeader title={`${subject} schedule`} description="Upcoming assessments for your classes." />
+            <div className="space-y-3">
+              {exams.length === 0 ? (
+                <EmptyState icon="calendar" title="Nothing scheduled" description="Use the form to set your next assessment." />
+              ) : (
+                exams.map((exam) => (
+                  <div key={exam.id} className="card flex items-center gap-4 p-4">
+                    <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-uni-blue text-center text-white">
+                      <div>
+                        <p className="font-display text-base font-extrabold leading-none">
+                          {new Date(exam.date).getDate()}
+                        </p>
+                        <p className="mt-0.5 text-[8px] font-bold uppercase text-slate-300">
+                          {new Date(exam.date).toLocaleDateString('en-GB', { month: 'short' })}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[12.5px] font-bold text-uni-blue">{exam.title}</p>
+                      <p className="mt-0.5 text-[10.5px] text-slate-400">
+                        {prettyDate(exam.date)} · {exam.duration}
+                      </p>
+                    </div>
+                    <span className="badge-gold shrink-0">{exam.subject}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       )}
-    </div>
+
+      {/* Publish modal */}
+      <Modal
+        open={publishing}
+        onClose={() => setPublishing(false)}
+        title="Publish lesson notes"
+        subtitle={`${subject} · visible to every class instantly`}
+        icon="pencil"
+        size="lg"
+      >
+        <form onSubmit={publish} className="space-y-4">
+          <div>
+            <label className="label" htmlFor="noteTitle">Topic title</label>
+            <input
+              id="noteTitle"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. The mammalian heart"
+              className="input"
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="label" htmlFor="noteUnit">Unit</label>
+              <input
+                id="noteUnit"
+                value={unit}
+                onChange={(e) => setUnit(e.target.value)}
+                placeholder="e.g. Unit 3"
+                className="input"
+              />
+            </div>
+            <div>
+              <label className="label" htmlFor="noteSubject">Subject</label>
+              <input id="noteSubject" value={subject} readOnly className="input bg-slate-50 text-slate-500" />
+            </div>
+          </div>
+          <div>
+            <label className="label" htmlFor="noteContent">Lesson content</label>
+            <textarea
+              id="noteContent"
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              rows={8}
+              placeholder="Paste or write the lesson. Markdown is supported."
+              className="input resize-y"
+            />
+          </div>
+          <div className="flex flex-col gap-2 pt-1 sm:flex-row">
+            <button type="button" onClick={() => setPublishing(false)} className="btn-secondary flex-1">
+              Cancel
+            </button>
+            <button type="submit" className="btn-primary flex-1" disabled={!title.trim()}>
+              <Icon name="check" size={15} /> Publish to classes
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Guidance modal */}
+      <Modal
+        open={coaching !== null}
+        onClose={() => setCoaching(null)}
+        title="Academic guidance"
+        subtitle={coaching ? `${coaching.studentName} · ${subject}` : undefined}
+        icon="chat"
+        size="md"
+        accent="green"
+      >
+        {coaching && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-xl bg-slate-50 p-3 text-center">
+                <p className="font-display text-base font-extrabold text-uni-blue">{coaching.mastery}%</p>
+                <p className="text-[9px] font-bold uppercase tracking-[0.08em] text-slate-400">Mastery</p>
+              </div>
+              <div className="rounded-xl bg-slate-50 p-3 text-center">
+                <p className="font-display text-base font-extrabold text-uni-blue">{statusLabel(coaching.status)}</p>
+                <p className="text-[9px] font-bold uppercase tracking-[0.08em] text-slate-400">Status</p>
+              </div>
+              <div className="rounded-xl bg-slate-50 p-3 text-center">
+                <p className="truncate font-display text-[11px] font-extrabold leading-6 text-uni-blue">{coaching.lastActive}</p>
+                <p className="text-[9px] font-bold uppercase tracking-[0.08em] text-slate-400">Last active</p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <label className="label mb-0" htmlFor="feedback">Message</label>
+              <button onClick={draftFeedback} disabled={drafting} className="btn-ghost btn-sm text-uni-blue">
+                <Icon name={drafting ? 'refresh' : 'sparkles'} size={13} className={drafting ? 'animate-spin' : ''} />
+                {drafting ? 'Drafting…' : 'Draft with Soma'}
+              </button>
+            </div>
+
+            <textarea
+              id="feedback"
+              value={message}
+              onChange={(e) => setMessage(e.target.value)}
+              rows={8}
+              placeholder="Write specific, encouraging guidance…"
+              className="input resize-y"
+            />
+
+            {message.includes('###') && (
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+                <p className="mb-2 text-[9px] font-bold uppercase tracking-[0.12em] text-slate-400">Preview</p>
+                <Markdown content={message} compact />
+              </div>
+            )}
+
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button onClick={() => setCoaching(null)} className="btn-secondary flex-1">
+                Cancel
+              </button>
+              <button onClick={deliver} disabled={!message.trim()} className="btn-green flex-1">
+                <Icon name="send" size={14} /> Deliver message
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </AppShell>
   );
-};
-
-export default TeacherDashboard;
+}

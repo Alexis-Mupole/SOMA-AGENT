@@ -512,7 +512,7 @@ Here is the **NCDC-aligned** path we can work through together. Pick any unit an
 
   if (isGreeting(text) && text.length < 40) {
     return {
-      response: `### Salama, ${n(name)}! 👋
+      response: `### Salama, ${n(name)}!
 
 I am **Soma**, your AI study specialist for the Ugandan O-Level syllabus. I can explain concepts, work through past-paper style questions, and quiz you until a topic feels easy.
 

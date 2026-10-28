@@ -537,13 +537,6 @@ export const DEMO_MASTERY: SyllabusNode[] = [
   },
 ];
 
-export const DEMO_SUBJECTS = [
-  { name: 'Biology', color: '#12b76a', icon: '🧬' },
-  { name: 'Mathematics', color: '#f5c542', icon: '📐' },
-  { name: 'Chemistry', color: '#2c72a3', icon: '⚗️' },
-  { name: 'Physics', color: '#8b5cf6', icon: '⚡' },
-  { name: 'English', color: '#ec4899', icon: '📖' },
-];
 
 export const DEMO_DEMO_NOTES = [
   'No Supabase keys detected — running with the bundled demo dataset.',

@@ -1,361 +1,513 @@
-
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line } from 'recharts';
-import { UserProfile, SchoolInfo, Resource, StudentProgress } from '@/types';
-import { fetchSystemHealth, fetchTeachers, fetchStudentProgress, fetchClassResources } from '@/lib/services/databaseService';
+import React, { useEffect, useMemo, useState } from 'react';
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import { Resource, SchoolInfo, StudentProgress, UserProfile } from '@/types';
+import {
+  fetchClassResources,
+  fetchStudentProgress,
+  fetchSystemHealth,
+  fetchTeachers,
+} from '@/lib/services/databaseService';
+import { DEMO_PLATFORM_WEEKLY, DEMO_SECURITY_LOGS } from '@/lib/demo/data';
+import AppShell, { NavItem } from './ui/Shell';
+import { PageHeader, SectionHeader, EmptyState } from './ui/PageHeader';
+import StatCard from './ui/StatCard';
+import Icon from './ui/Icon';
+import Modal from './ui/Modal';
+import Markdown from './ui/Markdown';
+import { useToast } from './ui/Toast';
 
 interface Props {
   onLogout: () => void;
   userProfile: UserProfile;
 }
 
-const AdminDashboard: React.FC<Props> = ({ onLogout, userProfile }) => {
-  const [activeTab, setActiveTab] = useState<'mission' | 'users' | 'resources' | 'academic' | 'settings'>('mission');
-  const [health, setHealth] = useState<{status: string, users: number, uptime: string} | null>(null);
-  const [allStudents, setAllStudents] = useState<StudentProgress[]>([]);
-  const [allTeachers, setAllTeachers] = useState<UserProfile[]>([]);
-  const [allResources, setAllResources] = useState<Resource[]>([]);
-  
+type Tab = 'overview' | 'users' | 'library' | 'settings';
+
+const NAV: NavItem[] = [
+  { id: 'overview', label: 'Platform overview', icon: 'activity', short: 'Overview' },
+  { id: 'users', label: 'People', icon: 'users', short: 'People' },
+  { id: 'library', label: 'Resource registry', icon: 'database', short: 'Library' },
+  { id: 'settings', label: 'Configuration', icon: 'settings', short: 'Config' },
+];
+
+const SCHOOL: SchoolInfo = { name: 'Gayaza Schools Network', location: 'Central Uganda', motto: '' };
+
+const initials = (name: string) =>
+  name
+    .split(' ')
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('');
+
+export default function AdminDashboard({ onLogout, userProfile }: Props) {
+  const { toast } = useToast();
+  const [tab, setTab] = useState<Tab>('overview');
+  const [health, setHealth] = useState<{ status: string; users: number; uptime: string } | null>(null);
+  const [students, setStudents] = useState<StudentProgress[]>([]);
+  const [teachers, setTeachers] = useState<UserProfile[]>([]);
+  const [resources, setResources] = useState<Resource[]>([]);
+  const [query, setQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState<'all' | 'teacher' | 'student'>('all');
+  const [aiStatus, setAiStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+  const [reviewing, setReviewing] = useState<Resource | null>(null);
+
   const [config, setConfig] = useState({
-    instanceName: "Gayaza High School Hub",
-    region: "Central Uganda",
-    aiProvider: "Google Gemini 3",
-    maintenanceMode: false
+    instanceName: 'Gayaza High School',
+    region: 'Central Uganda',
+    aiProvider: 'Google Gemini',
+    maintenance: false,
   });
 
-  const chartData = [
-    { name: 'Mon', logins: 400, queries: 2400 },
-    { name: 'Tue', logins: 300, queries: 1398 },
-    { name: 'Wed', logins: 200, queries: 9800 },
-    { name: 'Thu', logins: 278, queries: 3908 },
-    { name: 'Fri', logins: 189, queries: 4800 },
-    { name: 'Sat', logins: 239, queries: 3800 },
-    { name: 'Sun', logins: 349, queries: 4300 },
-  ];
-
   useEffect(() => {
-    const loadGlobalData = async () => {
-      const h = await fetchSystemHealth();
-      setHealth(h);
-      const s = await fetchStudentProgress('Biology'); // Mock global sample
-      setAllStudents(s);
-      const t = await fetchTeachers('GLOBAL');
-      setAllTeachers(t);
-      const r = await fetchClassResources('GLOBAL');
-      setAllResources(r);
+    let active = true;
+    const load = async () => {
+      const [platformHealth, progress, staff, library] = await Promise.all([
+        fetchSystemHealth(),
+        fetchStudentProgress('Biology'),
+        fetchTeachers('GLOBAL'),
+        fetchClassResources('GLOBAL'),
+      ]);
+      if (!active) return;
+      setHealth(platformHealth);
+      setStudents(progress);
+      setTeachers(staff);
+      setResources(library);
     };
-    loadGlobalData();
+    load();
+
+    fetch('/api/ai/chat')
+      .then((res) => res.json())
+      .then((data) => setAiStatus(data.configured ? 'online' : 'offline'))
+      .catch(() => setAiStatus('offline'));
+
+    return () => {
+      active = false;
+    };
   }, []);
 
-  const navItems = [
-    { id: 'mission', label: 'Mission Control', icon: '📡' },
-    { id: 'users', label: 'User Directory', icon: '👥' },
-    { id: 'resources', label: 'Global Library', icon: '📚' },
-    { id: 'academic', label: 'Academic Hub', icon: '🏫' },
-    { id: 'settings', label: 'System Config', icon: '⚙️' },
-  ];
+  const people = useMemo(() => {
+    const teachersList = teachers.map((t) => ({ ...t, role: 'teacher' as const }));
+    const studentsList = students.map((s) => ({
+      id: s.studentId,
+      fullName: s.studentName,
+      email: `${s.studentName.split(' ')[0].toLowerCase()}@gayaza.ac.ug`,
+      role: 'student' as const,
+      status: 'APPROVED' as const,
+      schoolId: '',
+    }));
+    return [...teachersList, ...studentsList];
+  }, [teachers, students]);
+
+  const visiblePeople = useMemo(() => {
+    const search = query.trim().toLowerCase();
+    return people.filter((person) => {
+      const matchesRole = roleFilter === 'all' || person.role === roleFilter;
+      const matchesQuery = !search || `${person.fullName} ${person.email}`.toLowerCase().includes(search);
+      return matchesRole && matchesQuery;
+    });
+  }, [people, query, roleFilter]);
+
+  const lastDay = DEMO_PLATFORM_WEEKLY[DEMO_PLATFORM_WEEKLY.length - 1];
+  const weeklyQueries = DEMO_PLATFORM_WEEKLY.reduce((sum, day) => sum + day.queries, 0);
 
   return (
-    <div className="min-h-screen bg-[#0a0e14] text-slate-300 flex flex-col md:flex-row font-sans selection:bg-uni-blue selection:text-white">
-      {/* Sidebar - Pro Admin Style */}
-      <aside className="w-full md:w-72 bg-[#0f172a] border-r border-slate-800 flex flex-col z-50">
-        <div className="p-8 border-b border-slate-800">
-          <div className="flex items-center gap-4">
-            <div className="w-10 h-10 bg-crane-yellow rounded-xl flex items-center justify-center text-slate-900 font-black text-xl shadow-[0_0_20px_rgba(252,220,4,0.3)]">Σ</div>
-            <div>
-              <h1 className="text-white font-montserrat font-black text-sm tracking-widest uppercase">Soma Admin</h1>
-              <p className="text-[9px] text-slate-500 font-bold uppercase tracking-[0.2em]">Root Authority</p>
-            </div>
+    <AppShell
+      roleLabel="Administrator"
+      nav={NAV}
+      active={tab}
+      onNavigate={(id) => setTab(id as Tab)}
+      user={userProfile}
+      school={SCHOOL}
+      onLogout={onLogout}
+      accent="blue"
+      aside={
+        <div className="mb-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-slate-500">AI engine</p>
+            <span className={`inline-flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[0.08em] ${aiStatus === 'online' ? 'text-leaf-green' : 'text-crane-yellow'}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${aiStatus === 'online' ? 'bg-leaf-green' : 'bg-crane-yellow'}`} />
+              {aiStatus === 'checking' ? 'Checking' : aiStatus === 'online' ? 'Gemini online' : 'Offline tutor'}
+            </span>
           </div>
+          <p className="mt-2 text-[10.5px] leading-relaxed text-slate-500">
+            {aiStatus === 'online'
+              ? 'Gemini keys detected. Tutor responses are model-generated.'
+              : 'No Gemini key detected. The offline curriculum tutor is answering every request.'}
+          </p>
         </div>
-
-        <nav className="flex-1 p-4 space-y-1">
-          {navItems.map(item => (
-            <button
-              key={item.id}
-              onClick={() => setActiveTab(item.id as any)}
-              className={`w-full flex items-center gap-4 px-6 py-4 rounded-xl transition-all duration-200 group ${activeTab === item.id ? 'bg-uni-blue text-white shadow-lg shadow-uni-blue/20' : 'text-slate-500 hover:bg-white/5 hover:text-slate-300'}`}
-            >
-              <span className={`text-xl transition-transform group-hover:scale-110 ${activeTab === item.id ? 'opacity-100' : 'opacity-50'}`}>{item.icon}</span>
-              <span className="text-[11px] font-black uppercase tracking-widest">{item.label}</span>
-            </button>
-          ))}
-        </nav>
-
-        <div className="p-6 border-t border-slate-800">
-          <div className="bg-slate-900/50 p-4 rounded-2xl border border-slate-800 mb-6">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-2 h-2 bg-leaf-green rounded-full animate-pulse shadow-[0_0_8px_rgba(76,175,80,0.8)]" />
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">System Health</p>
-            </div>
-            <p className="text-xl font-mono font-black text-white">99.98%</p>
-          </div>
-          
-          <button 
-            onClick={onLogout}
-            className="w-full flex items-center justify-center gap-3 py-4 bg-red-500/10 text-red-400 hover:bg-red-500 hover:text-white rounded-xl transition-all font-black text-[10px] uppercase tracking-widest border border-red-500/20"
+      }
+    >
+      <PageHeader
+        eyebrow="Platform administration"
+        title="Network overview"
+        description={`Signed in as ${userProfile.fullName}. Monitor adoption, people and shared curriculum resources.`}
+        actions={
+          <button
+            onClick={() =>
+              toast('Snapshot refreshed', { description: `Uptime ${health?.uptime || '99.98%'} · ${health?.users ?? 0} accounts indexed.` })
+            }
+            className="btn-secondary"
           >
-            <span>🚪</span> Terminate Session
+            <Icon name="refresh" size={15} /> Refresh
           </button>
-        </div>
-      </aside>
+        }
+      />
 
-      {/* Main Content Area */}
-      <main className="flex-1 overflow-y-auto bg-[#0a0e14]">
-        {/* Top Header Bar */}
-        <header className="sticky top-0 bg-[#0a0e14]/80 backdrop-blur-md border-b border-slate-800 p-6 z-40">
-          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-            <div>
-              <h2 className="text-white text-2xl font-montserrat font-black uppercase tracking-tight">
-                {navItems.find(n => n.id === activeTab)?.label}
-              </h2>
-              <p className="text-slate-500 text-[10px] font-bold uppercase tracking-[0.3em] mt-1">Superuser Context: {userProfile.fullName}</p>
-            </div>
-            <div className="flex items-center gap-4 bg-slate-900 p-1.5 rounded-2xl border border-slate-800">
-               <div className="flex items-center gap-3 px-4 py-2 bg-[#0a0e14] rounded-xl border border-slate-800">
-                  <span className="text-xs text-slate-500">API Latency:</span>
-                  <span className="text-xs font-mono font-bold text-leaf-green">42ms</span>
-               </div>
-               <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-lg cursor-help">🔔</div>
-            </div>
+      {tab === 'overview' && (
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-4">
+            <StatCard label="Accounts indexed" value={health?.users ?? '—'} icon="users" tone="blue" hint="All roles in the network" />
+            <StatCard label="Uptime (30d)" value={health?.uptime ?? '—'} icon="activity" tone="green" hint="No incidents recorded" />
+            <StatCard label="Library resources" value={resources.length} icon="database" tone="gold" hint="Across five subjects" />
+            <StatCard label="AI queries" value={weeklyQueries.toLocaleString()} icon="sparkles" tone="violet" hint="Last 7 days" />
           </div>
-        </header>
 
-        <div className="p-6 md:p-10 max-w-7xl mx-auto space-y-10">
-          
-          {activeTab === 'mission' && (
-            <div className="space-y-8 animate-in fade-in duration-700">
-              {/* Global Insight Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-                {[
-                  { label: 'Active Sessions', val: '1,284', delta: '+12%', icon: '🔥', col: 'text-orange-500' },
-                  { label: 'AI Tokens Used', val: '4.2M', delta: '+5%', icon: '🧠', col: 'text-uni-blue' },
-                  { label: 'Resource Growth', val: '+240', delta: 'New', icon: '📦', col: 'text-leaf-green' },
-                  { label: 'Uptime (24h)', val: '99.99%', delta: 'Peak', icon: '🔋', col: 'text-crane-yellow' },
-                ].map((stat, i) => (
-                  <div key={i} className="bg-slate-900 border border-slate-800 p-6 rounded-[24px] hover:border-slate-700 transition-all">
-                    <div className="flex justify-between items-start mb-4">
-                      <div className="w-10 h-10 rounded-xl bg-slate-800 flex items-center justify-center text-xl">{stat.icon}</div>
-                      <span className="text-[10px] font-black text-leaf-green">+{stat.delta}</span>
+          <div className="grid gap-6 xl:grid-cols-[1.55fr_1fr]">
+            <div className="card p-5 sm:p-6">
+              <SectionHeader
+                title="Adoption this week"
+                description="Daily sign-ins and AI study queries across the network."
+                actions={
+                  <div className="flex items-center gap-3 text-[9.5px] font-bold uppercase tracking-[0.08em]">
+                    <span className="flex items-center gap-1.5 text-uni-blue">
+                      <span className="h-1.5 w-4 rounded-full bg-uni-blue" /> Sign-ins
+                    </span>
+                    <span className="flex items-center gap-1.5 text-crane-yellow-800">
+                      <span className="h-1.5 w-4 rounded-full bg-crane-yellow" /> Queries
+                    </span>
+                  </div>
+                }
+              />
+              <div className="h-[250px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={DEMO_PLATFORM_WEEKLY} margin={{ top: 6, right: 8, bottom: 0, left: -18 }}>
+                    <CartesianGrid stroke="#eef2f6" strokeDasharray="4 4" vertical={false} />
+                    <XAxis dataKey="day" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8', fontWeight: 600 }} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: '#94a3b8' }} />
+                    <Tooltip
+                      contentStyle={{ borderRadius: 12, border: '1px solid #e2e8f0', fontSize: 11 }}
+                      labelStyle={{ fontWeight: 700, color: '#0a2a43' }}
+                    />
+                    <Line type="monotone" dataKey="queries" stroke="#f5c542" strokeWidth={2.5} dot={false} />
+                    <Line type="monotone" dataKey="logins" stroke="#0a2a43" strokeWidth={2.5} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="card p-5">
+              <SectionHeader title="Recent activity" description="Administrative and security events." />
+              <div className="space-y-3">
+                {DEMO_SECURITY_LOGS.map((log) => (
+                  <div key={log.event} className="flex items-start gap-2.5">
+                    <span
+                      className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${
+                        log.status === 'WARN' ? 'bg-crane-yellow' : 'bg-leaf-green'
+                      }`}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11.5px] font-medium leading-snug text-slate-600">{log.event}</p>
+                      <p className="text-[9.5px] font-semibold uppercase tracking-[0.08em] text-slate-400">{log.time}</p>
                     </div>
-                    <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">{stat.label}</p>
-                    <h3 className="text-3xl font-black text-white">{stat.val}</h3>
                   </div>
                 ))}
               </div>
+              <button
+                onClick={() => toast('Audit log is complete', { description: 'No unresolved security events today.', tone: 'info' })}
+                className="btn-secondary btn-sm mt-4 w-full"
+              >
+                View audit log
+              </button>
+            </div>
+          </div>
 
-              {/* Traffic Visualization */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="lg:col-span-2 bg-slate-900 border border-slate-800 p-8 rounded-[32px]">
-                   <h3 className="text-white text-lg font-black uppercase tracking-widest mb-8">System Traffic Analysis</h3>
-                   <div className="h-[300px]">
-                     <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={chartData}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                          <XAxis dataKey="name" stroke="#64748b" fontSize={10} axisLine={false} tickLine={false} />
-                          <YAxis stroke="#64748b" fontSize={10} axisLine={false} tickLine={false} />
-                          <Tooltip contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '12px' }} />
-                          <Line type="monotone" dataKey="queries" stroke="#FCDC04" strokeWidth={4} dot={false} />
-                          <Line type="monotone" dataKey="logins" stroke="#003366" strokeWidth={4} dot={false} />
-                        </LineChart>
-                     </ResponsiveContainer>
-                   </div>
-                </div>
-                
-                <div className="bg-slate-900 border border-slate-800 p-8 rounded-[32px] flex flex-col">
-                  <h3 className="text-white text-lg font-black uppercase tracking-widest mb-6">Recent Security Logs</h3>
-                  <div className="space-y-4 flex-1">
-                    {[
-                      { ev: 'Root Login', time: '2m ago', stat: 'OK' },
-                      { ev: 'API Config Changed', time: '14m ago', stat: 'OK' },
-                      { ev: 'New Academic Hub IP', time: '1h ago', stat: 'WARN' },
-                      { ev: 'Bulk Import Started', time: '2h ago', stat: 'OK' },
-                    ].map((log, i) => (
-                      <div key={i} className="flex justify-between items-center py-3 border-b border-slate-800">
-                        <div>
-                          <p className="text-xs font-bold text-slate-300">{log.ev}</p>
-                          <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">{log.time}</p>
-                        </div>
-                        <span className={`text-[9px] font-black px-2 py-0.5 rounded ${log.stat === 'OK' ? 'bg-leaf-green/10 text-leaf-green' : 'bg-orange-500/10 text-orange-500'}`}>{log.stat}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <button className="mt-8 w-full py-4 bg-slate-800 text-slate-400 font-black text-[10px] uppercase tracking-widest rounded-xl hover:bg-slate-700 transition-all">View All Audit Logs</button>
-                </div>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="card flex items-start gap-3 p-4">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-leaf-green/10 text-leaf-green-700">
+                <Icon name="cpu" size={16} />
+              </span>
+              <div>
+                <p className="text-[12px] font-bold text-uni-blue">AI availability</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">
+                  {aiStatus === 'online' ? 'Primary and fallback models are healthy.' : 'Offline tutor serving every request without keys.'}
+                </p>
               </div>
             </div>
-          )}
-
-          {activeTab === 'users' && (
-            <div className="space-y-8 animate-in slide-in-from-right-4">
-              <div className="flex justify-between items-center">
-                 <h3 className="text-white text-xl font-black uppercase tracking-widest">Global User Directory</h3>
-                 <div className="flex gap-4">
-                   <button className="px-6 py-2 bg-uni-blue text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-uni-blue/20">Add Authority</button>
-                 </div>
-              </div>
-              
-              <div className="bg-slate-900 border border-slate-800 rounded-[32px] overflow-hidden">
-                <table className="w-full text-left">
-                   <thead className="bg-slate-800/50">
-                     <tr>
-                        <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest text-slate-500">Identity</th>
-                        <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest text-slate-500">Role</th>
-                        <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest text-slate-500">Status</th>
-                        <th className="px-8 py-5 text-[10px] font-black uppercase tracking-widest text-slate-500 text-right">Actions</th>
-                     </tr>
-                   </thead>
-                   <tbody className="divide-y divide-slate-800">
-                     {[...allTeachers, ...allStudents.map(s => ({ id: s.studentId, fullName: s.studentName, role: 'student', email: 'verified' }))].map((u, i) => (
-                       <tr key={i} className="hover:bg-white/5 transition-colors group">
-                         <td className="px-8 py-5">
-                            <p className="text-white font-bold text-sm">{u.fullName}</p>
-                            <p className="text-[9px] text-slate-500 font-bold uppercase tracking-widest">{u.id}</p>
-                         </td>
-                         <td className="px-8 py-5">
-                            <span className="text-[10px] font-black text-uni-blue uppercase tracking-widest px-3 py-1 bg-uni-blue/10 rounded-full">{u.role}</span>
-                         </td>
-                         <td className="px-8 py-5">
-                            <span className="flex items-center gap-2">
-                               <span className="w-1.5 h-1.5 bg-leaf-green rounded-full shadow-[0_0_5px_rgba(76,175,80,0.8)]" />
-                               <span className="text-[10px] text-slate-300 font-bold uppercase">Active</span>
-                            </span>
-                         </td>
-                         <td className="px-8 py-5 text-right">
-                            <button className="text-slate-500 hover:text-white transition-colors">Edit Authority</button>
-                         </td>
-                       </tr>
-                     ))}
-                   </tbody>
-                </table>
+            <div className="card flex items-start gap-3 p-4">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-uni-blue/5 text-uni-blue">
+                <Icon name="user-check" size={16} />
+              </span>
+              <div>
+                <p className="text-[12px] font-bold text-uni-blue">Active accounts</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">
+                  {lastDay.logins} sign-ins yesterday · {teachers.length} teachers online.
+                </p>
               </div>
             </div>
-          )}
-
-          {activeTab === 'resources' && (
-            <div className="space-y-8 animate-in slide-in-from-right-4">
-               <h3 className="text-white text-xl font-black uppercase tracking-widest">Global Curriculum Resource Registry</h3>
-               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                 {allResources.map(res => (
-                   <div key={res.id} className="bg-slate-900 border border-slate-800 p-8 rounded-[32px] hover:border-uni-blue/50 transition-all group">
-                     <div className="w-12 h-12 bg-slate-800 rounded-2xl flex items-center justify-center text-2xl mb-6 shadow-inner group-hover:bg-uni-blue transition-colors">📄</div>
-                     <h4 className="text-white font-bold text-lg mb-2">{res.title}</h4>
-                     <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-6">{res.subject} • {res.unit}</p>
-                     <div className="flex justify-between items-center pt-6 border-t border-slate-800">
-                        <button className="text-[10px] font-black text-red-400 uppercase tracking-widest">Withdraw Resource</button>
-                        <button className="text-[10px] font-black text-uni-blue uppercase tracking-widest">Review Audit</button>
-                     </div>
-                   </div>
-                 ))}
-               </div>
+            <div className="card flex items-start gap-3 p-4">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-crane-yellow/15 text-crane-yellow-800">
+                <Icon name="book" size={16} />
+              </span>
+              <div>
+                <p className="text-[12px] font-bold text-uni-blue">Curriculum coverage</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">
+                  5 subjects · {resources.length} approved resources in the registry.
+                </p>
+              </div>
             </div>
-          )}
-
-          {activeTab === 'academic' && (
-            <div className="space-y-8 animate-in zoom-in-95">
-               <div className="bg-slate-900 border border-slate-800 p-10 rounded-[48px] relative overflow-hidden">
-                  <div className="absolute top-0 right-0 w-96 h-96 bg-leaf-green/5 rounded-full -mr-48 -mt-48 blur-3xl opacity-50" />
-                  <h3 className="text-white text-2xl font-black uppercase tracking-tight mb-2">Academic Hub Oversight</h3>
-                  <p className="text-slate-500 text-sm max-w-xl mb-10 leading-relaxed">Direct administrative bridge to Academic Directors and Directors of Studies. Control institutional hierarchy and enrollment approvals.</p>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                     <div className="bg-slate-800/50 p-8 rounded-[32px] border border-slate-700">
-                        <h4 className="text-white font-black text-xs uppercase tracking-[0.2em] mb-6">Staffing Insights</h4>
-                        <div className="space-y-4">
-                           <div className="flex justify-between items-center py-2">
-                              <span className="text-slate-400 text-[11px] font-bold uppercase">Teaching Specialists</span>
-                              <span className="text-white font-black text-[11px]">{allTeachers.length} Active</span>
-                           </div>
-                           <div className="flex justify-between items-center py-2">
-                              <span className="text-slate-400 text-[11px] font-bold uppercase">Classrooms Deployed</span>
-                              <span className="text-white font-black text-[11px]">24 Units</span>
-                           </div>
-                        </div>
-                        <button className="w-full mt-10 py-4 bg-uni-blue text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-uni-blue/30">Enter Academic Console</button>
-                     </div>
-                     
-                     <div className="bg-slate-800/50 p-8 rounded-[32px] border border-slate-700">
-                        <h4 className="text-white font-black text-xs uppercase tracking-[0.2em] mb-6">Mastery Distribution</h4>
-                        <div className="h-40">
-                           <ResponsiveContainer width="100%" height="100%">
-                              <BarChart data={allStudents.slice(0, 5)}>
-                                 <Bar dataKey="mastery" fill="#FCDC04" radius={[4, 4, 0, 0]} />
-                              </BarChart>
-                           </ResponsiveContainer>
-                        </div>
-                        <p className="text-center text-[9px] text-slate-500 font-bold uppercase tracking-widest mt-4">Average Global Mastery: 64%</p>
-                     </div>
-                  </div>
-               </div>
-            </div>
-          )}
-
-          {activeTab === 'settings' && (
-            <div className="animate-in fade-in slide-in-from-bottom-6">
-               <div className="bg-slate-900 border border-slate-800 rounded-[40px] p-10">
-                  <h3 className="text-white text-xl font-black uppercase tracking-widest mb-10 border-b border-slate-800 pb-6">Core System Configuration</h3>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                    <div className="space-y-6">
-                       <div className="space-y-3">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Infrastructure Instance Name</label>
-                          <input 
-                            value={config.instanceName}
-                            onChange={e => setConfig({...config, instanceName: e.target.value})}
-                            className="w-full bg-slate-800 border border-slate-700 p-5 rounded-2xl text-white font-medium outline-none focus:border-uni-blue transition-all"
-                          />
-                       </div>
-                       <div className="space-y-3">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Operational Region</label>
-                          <select className="w-full bg-slate-800 border border-slate-700 p-5 rounded-2xl text-white font-medium outline-none focus:border-uni-blue transition-all appearance-none">
-                             <option>Central Uganda (Kampala)</option>
-                             <option>East Africa Node</option>
-                          </select>
-                       </div>
-                    </div>
-                    
-                    <div className="space-y-6">
-                       <div className="space-y-3">
-                          <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">AI Cognitive Engine</label>
-                          <select className="w-full bg-slate-800 border border-slate-700 p-5 rounded-2xl text-white font-medium outline-none focus:border-uni-blue transition-all appearance-none">
-                             <option>Google Gemini 3 Flash (Latest)</option>
-                             <option>Google Gemini 3 Pro (Enhanced)</option>
-                          </select>
-                       </div>
-                       <div className="bg-slate-800 p-6 rounded-[28px] border border-slate-700 flex items-center justify-between">
-                          <div>
-                            <p className="text-white font-bold text-sm">System-Wide Maintenance</p>
-                            <p className="text-[9px] text-slate-500 font-bold uppercase mt-1">Locks all non-admin access</p>
-                          </div>
-                          <button 
-                            onClick={() => setConfig({...config, maintenanceMode: !config.maintenanceMode})}
-                            className={`w-14 h-8 rounded-full relative transition-colors ${config.maintenanceMode ? 'bg-red-500' : 'bg-slate-700'}`}
-                          >
-                             <div className={`absolute top-1 w-6 h-6 bg-white rounded-full transition-all ${config.maintenanceMode ? 'left-7' : 'left-1'}`} />
-                          </button>
-                       </div>
-                    </div>
-                  </div>
-                  
-                  <div className="mt-12 pt-10 border-t border-slate-800 flex justify-end gap-4">
-                     <button className="px-8 py-4 bg-slate-800 text-slate-400 font-black text-[10px] uppercase tracking-[0.2em] rounded-2xl hover:bg-slate-700">Restore Defaults</button>
-                     <button className="px-10 py-4 bg-uni-blue text-white font-black text-[10px] uppercase tracking-[0.2em] rounded-2xl shadow-xl shadow-uni-blue/20 hover:scale-105 transition-transform">Commit Infrastructure Updates</button>
-                  </div>
-               </div>
-            </div>
-          )}
-          
+          </div>
         </div>
+      )}
 
-        {/* Console Status Bar */}
-        <footer className="mt-20 p-8 border-t border-slate-800 text-center">
-           <p className="text-[9px] text-slate-600 font-black uppercase tracking-[0.5em]">Soma-Agent Global Orchestrator • Authorized Access Only • v2.4.0-STABLE</p>
-        </footer>
-      </main>
-    </div>
+      {tab === 'users' && (
+        <div className="space-y-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex gap-1.5">
+              {[
+                { id: 'all', label: 'Everyone' },
+                { id: 'teacher', label: 'Teachers' },
+                { id: 'student', label: 'Students' },
+              ].map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => setRoleFilter(item.id as typeof roleFilter)}
+                  className={`chip ${roleFilter === item.id ? 'chip-active' : ''}`}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            <div className="relative sm:w-64">
+              <Icon name="search" size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search people…"
+                className="input py-2.5 pl-9"
+              />
+            </div>
+          </div>
+
+          <div className="card overflow-hidden">
+            <div className="hidden grid-cols-[1.6fr_0.8fr_0.8fr_auto] gap-4 border-b border-slate-100 bg-slate-50/70 px-5 py-3 md:grid">
+              {['Identity', 'Role', 'Status', ''].map((head, i) => (
+                <p key={i} className="text-[9.5px] font-bold uppercase tracking-[0.12em] text-slate-400">
+                  {head}
+                </p>
+              ))}
+            </div>
+            {visiblePeople.length === 0 ? (
+              <EmptyState icon="users" title="No people match" description="Try a different search or role filter." />
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {visiblePeople.map((person) => (
+                  <div
+                    key={`${person.role}-${person.id}`}
+                    className="grid gap-2 px-4 py-3.5 md:grid-cols-[1.6fr_0.8fr_0.8fr_auto] md:items-center md:gap-4 md:px-5"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-uni-blue/5 text-[10px] font-extrabold text-uni-blue">
+                        {initials(person.fullName)}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate text-[12.5px] font-bold text-uni-blue">{person.fullName}</p>
+                        <p className="truncate text-[10px] text-slate-400">{person.email}</p>
+                      </div>
+                    </div>
+                    <span className={`badge w-fit ${person.role === 'teacher' ? 'badge-green' : 'badge-blue'}`}>{person.role}</span>
+                    <span className="flex items-center gap-1.5 text-[10.5px] font-semibold text-slate-500">
+                      <span className="h-1.5 w-1.5 rounded-full bg-leaf-green" /> Active
+                    </span>
+                    <button
+                      onClick={() => toast('Profile opened (demo)', { description: `${person.fullName}'s account details.`, tone: 'info' })}
+                      className="text-[10px] font-bold uppercase tracking-[0.08em] text-uni-blue hover:underline md:text-right"
+                    >
+                      Manage
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === 'library' && (
+        <div className="space-y-5">
+          <SectionHeader
+            title="Curriculum resource registry"
+            description="Every note shared with learners across the network."
+            actions={<span className="badge-slate">{resources.length} approved</span>}
+          />
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {resources.map((resource) => (
+              <article key={resource.id} className="card flex flex-col p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <span className="grid h-10 w-10 place-items-center rounded-xl bg-uni-blue/5 text-uni-blue">
+                    <Icon name="file" size={17} />
+                  </span>
+                  <span className="badge-blue">{resource.subject}</span>
+                </div>
+                <h3 className="mt-4 font-display text-[14px] font-bold leading-snug text-uni-blue">{resource.title}</h3>
+                <p className="mt-1 text-[10.5px] font-medium text-slate-400">
+                  {resource.unit} · {resource.fileSize}
+                </p>
+                <div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-3.5">
+                  <button onClick={() => setReviewing(resource)} className="text-[10px] font-bold uppercase tracking-[0.08em] text-uni-blue hover:underline">
+                    Review
+                  </button>
+                  <button
+                    onClick={() =>
+                      toast('Resource withdrawn (demo)', {
+                        description: `${resource.title} would be hidden from learners.`,
+                        tone: 'info',
+                      })
+                    }
+                    className="text-[10px] font-bold uppercase tracking-[0.08em] text-slate-400 transition-colors hover:text-red-500"
+                  >
+                    Withdraw
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === 'settings' && (
+        <div className="grid gap-6 xl:grid-cols-[1.4fr_1fr]">
+          <div className="card p-5 sm:p-6">
+            <SectionHeader title="Platform configuration" description="Institution identity and service behaviour." />
+            <div className="space-y-4">
+              <div>
+                <label className="label" htmlFor="instanceName">Institution name</label>
+                <input
+                  id="instanceName"
+                  value={config.instanceName}
+                  onChange={(e) => setConfig({ ...config, instanceName: e.target.value })}
+                  className="input"
+                />
+              </div>
+              <div>
+                <label className="label" htmlFor="region">Operational region</label>
+                <select
+                  id="region"
+                  value={config.region}
+                  onChange={(e) => setConfig({ ...config, region: e.target.value })}
+                  className="select"
+                >
+                  <option>Central Uganda</option>
+                  <option>Eastern Uganda</option>
+                  <option>Northern Uganda</option>
+                  <option>Western Uganda</option>
+                </select>
+              </div>
+              <div>
+                <label className="label" htmlFor="aiProvider">AI engine</label>
+                <select
+                  id="aiProvider"
+                  value={config.aiProvider}
+                  onChange={(e) => setConfig({ ...config, aiProvider: e.target.value })}
+                  className="select"
+                >
+                  <option>Google Gemini</option>
+                  <option>Offline curriculum tutor</option>
+                </select>
+                <p className="mt-1.5 text-[10.5px] text-slate-400">
+                  The offline tutor is always the fallback, so studying never stops when a key is missing.
+                </p>
+              </div>
+
+              <div className="flex items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                <div>
+                  <p className="text-[12px] font-bold text-uni-blue">Maintenance mode</p>
+                  <p className="mt-0.5 text-[10.5px] text-slate-400">Blocks student and guardian sign-in while staff keep working.</p>
+                </div>
+                <button
+                  onClick={() => setConfig({ ...config, maintenance: !config.maintenance })}
+                  className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${config.maintenance ? 'bg-red-500' : 'bg-slate-300'}`}
+                  role="switch"
+                  aria-checked={config.maintenance}
+                  aria-label="Toggle maintenance mode"
+                >
+                  <span
+                    className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow-sm transition-all ${
+                      config.maintenance ? 'left-6' : 'left-1'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="flex flex-col gap-2 pt-2 sm:flex-row">
+                <button
+                  onClick={() =>
+                    setConfig({ instanceName: 'Gayaza High School', region: 'Central Uganda', aiProvider: 'Google Gemini', maintenance: false })
+                  }
+                  className="btn-secondary flex-1"
+                >
+                  Restore defaults
+                </button>
+                <button
+                  onClick={() => toast('Configuration saved', { description: 'Changes apply to new sessions immediately.' })}
+                  className="btn-primary flex-1"
+                >
+                  <Icon name="check" size={15} /> Save changes
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="card p-5">
+              <SectionHeader title="Environment" />
+              <div className="space-y-3 text-[11px]">
+                {[
+                  { label: 'Data layer', value: 'Demo dataset', tone: 'text-crane-yellow-800 bg-crane-yellow/15' },
+                  { label: 'AI engine', value: aiStatus === 'online' ? 'Gemini' : 'Offline tutor', tone: 'text-uni-blue bg-uni-blue/10' },
+                  { label: 'Deployment', value: 'Vercel', tone: 'text-leaf-green-800 bg-leaf-green/10' },
+                ].map((row) => (
+                  <div key={row.label} className="flex items-center justify-between">
+                    <span className="font-medium text-slate-500">{row.label}</span>
+                    <span className={`rounded-md px-2 py-1 text-[9.5px] font-bold uppercase tracking-[0.08em] ${row.tone}`}>{row.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-crane-yellow/30 bg-crane-yellow/[0.08] p-5">
+              <div className="flex items-center gap-2 text-crane-yellow-800">
+                <Icon name="info" size={15} />
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em]">Demo environment</p>
+              </div>
+              <p className="mt-2 text-[11.5px] leading-relaxed text-slate-600">
+                This workspace uses a bundled dataset and offline AI so every screen can be explored without credentials.
+                Add Supabase and Gemini keys to switch to live data automatically.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <Modal
+        open={reviewing !== null}
+        onClose={() => setReviewing(null)}
+        title={reviewing?.title}
+        subtitle={reviewing ? `${reviewing.subject} · ${reviewing.unit}` : undefined}
+        icon="file"
+        size="lg"
+      >
+        {reviewing && <Markdown content={reviewing.content} />}
+      </Modal>
+    </AppShell>
   );
-};
-
-export default AdminDashboard;
+}

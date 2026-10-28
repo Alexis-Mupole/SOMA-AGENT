@@ -311,7 +311,7 @@ export default function Login({ onLogin, schoolName }: LoginProps) {
             </button>
           </p>
 
-          {DEMO_MODE_ENABLED && (
+          {true && (
             <div className="mt-8 rounded-3xl border border-crane-yellow/30 bg-crane-yellow/[0.07] p-4">
               <div className="flex items-start justify-between gap-3">
                 <div>

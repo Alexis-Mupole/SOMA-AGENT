@@ -1,13 +1,8 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { UserProfile, UserRole } from '@/types';
-import {
-  authenticateUser,
-  registerUser,
-  loginAsDemo,
-  DEMO_MODE_ENABLED,
-} from '@/lib/services/databaseService';
+import { authenticateUser, registerUser, DEMO_MODE_ENABLED } from '@/lib/services/databaseService';
 import { DEMO_ACCOUNTS, DEMO_PASSWORD } from '@/lib/demo/data';
 import Icon, { IconName } from './ui/Icon';
 import Logo from './ui/Logo';
@@ -41,12 +36,37 @@ export default function Login({ onLogin, schoolName }: LoginProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const formRef = useRef<HTMLDivElement>(null);
 
   const activeRole = useMemo(() => ROLES.find((r) => r.id === role)!, [role]);
+  const selectedDemo = useMemo(
+    () => Object.values(DEMO_ACCOUNTS).find((account) => account.email === email.trim().toLowerCase()),
+    [email]
+  );
 
-  const handleDemo = (demoRole: UserRole) => {
-    const profile = loginAsDemo(demoRole);
-    onLogin(profile);
+  const handleDemoFill = (demoRole: UserRole) => {
+    const account = DEMO_ACCOUNTS[demoRole];
+    setRole(demoRole);
+    setEmail(account.email);
+    setPassword(account.password);
+    setShowPassword(true);
+    setIsRegistering(false);
+    setError('');
+    setSuccessMsg(
+      `Credentials loaded for ${account.fullName}. Press “Continue as ${ROLES.find((r) => r.id === demoRole)?.label.toLowerCase()}” to sign in.`
+    );
+    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
+  const handleRoleChange = (nextRole: UserRole) => {
+    setRole(nextRole);
+    setError('');
+    setSuccessMsg('');
+    if (selectedDemo) {
+      setEmail('');
+      setPassword('');
+      setShowPassword(false);
+    }
   };
 
   const handleAuthAction = async (e: React.FormEvent) => {
@@ -152,7 +172,7 @@ export default function Login({ onLogin, schoolName }: LoginProps) {
 
       {/* Form panel */}
       <section className="flex items-center justify-center px-4 py-8 sm:px-8 lg:py-12">
-        <div className="w-full max-w-[460px] animate-fade-up">
+        <div ref={formRef} className="w-full max-w-[460px] animate-fade-up">
           <div className="mb-7">
             <p className="eyebrow">{isRegistering ? 'Join the platform' : 'Welcome back'}</p>
             <h2 className="mt-2 font-display text-[28px] font-extrabold tracking-tight text-uni-blue">
@@ -172,10 +192,7 @@ export default function Login({ onLogin, schoolName }: LoginProps) {
                 <button
                   key={r.id}
                   type="button"
-                  onClick={() => {
-                    setRole(r.id);
-                    setError('');
-                  }}
+                  onClick={() => handleRoleChange(r.id)}
                   className={`flex flex-col items-center gap-1.5 rounded-xl px-1 py-2.5 transition-all ${
                     active ? 'bg-uni-blue text-white shadow-sm' : 'text-slate-400 hover:bg-slate-50 hover:text-uni-blue'
                   }`}
@@ -298,39 +315,58 @@ export default function Login({ onLogin, schoolName }: LoginProps) {
                     <Icon name="bolt" size={13} /> Demo access
                   </p>
                   <p className="mt-1 text-[11px] leading-relaxed text-slate-500">
-                    Explore any role instantly. Password <span className="font-mono font-semibold text-uni-blue">{DEMO_PASSWORD}</span>
+                    Click a profile to load its email and password, then press continue. Password{' '}
+                    <span className="font-mono font-semibold text-uni-blue">{DEMO_PASSWORD}</span>
                   </p>
                 </div>
                 <span className="badge-gold">no setup</span>
               </div>
               <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {ROLES.map((r) => (
-                  <button
-                    key={r.id}
-                    type="button"
-                    onClick={() => handleDemo(r.id)}
-                    className="group flex items-center justify-between gap-2 rounded-xl border border-white bg-white/90 px-3 py-2.5 text-left transition-all hover:border-uni-blue/25 hover:bg-white hover:shadow-sm"
-                  >
-                    <span className="flex min-w-0 items-center gap-2.5">
-                      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-uni-blue/5 text-uni-blue">
-                        <Icon name={r.icon} size={15} />
-                      </span>
-                      <span className="min-w-0">
-                        <span className="block truncate text-[11.5px] font-bold text-uni-blue">
-                          {DEMO_ACCOUNTS[r.id].fullName}
+                {ROLES.map((r) => {
+                  const account = DEMO_ACCOUNTS[r.id];
+                  const selected = selectedDemo?.role === r.id;
+                  return (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => handleDemoFill(r.id)}
+                      aria-pressed={selected}
+                      className={`group flex items-center justify-between gap-2 rounded-xl border px-3 py-2.5 text-left transition-all hover:bg-white hover:shadow-sm ${
+                        selected
+                          ? 'border-uni-blue/40 bg-white ring-1 ring-uni-blue/15'
+                          : 'border-white bg-white/90 hover:border-uni-blue/25'
+                      }`}
+                    >
+                      <span className="flex min-w-0 items-center gap-2.5">
+                        <span
+                          className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${
+                            selected ? 'bg-leaf-green/10 text-leaf-green-700' : 'bg-uni-blue/5 text-uni-blue'
+                          }`}
+                        >
+                          <Icon name={r.icon} size={15} />
                         </span>
-                        <span className="block text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-400">
-                          {r.label}
+                        <span className="min-w-0">
+                          <span className="block truncate text-[11.5px] font-bold text-uni-blue">
+                            {account.fullName}
+                          </span>
+                          <span className="mt-0.5 block truncate text-[9.5px] font-medium text-slate-400">
+                            {account.email}
+                          </span>
+                          <span className="block text-[8.5px] font-semibold uppercase tracking-[0.1em] text-slate-400">
+                            {r.label}
+                          </span>
                         </span>
                       </span>
-                    </span>
-                    <Icon
-                      name="arrow-up-right"
-                      size={14}
-                      className="shrink-0 text-slate-300 transition-colors group-hover:text-uni-blue"
-                    />
-                  </button>
-                ))}
+                      <Icon
+                        name={selected ? 'check-circle' : 'arrow-up-right'}
+                        size={14}
+                        className={`shrink-0 transition-colors ${
+                          selected ? 'text-leaf-green' : 'text-slate-300 group-hover:text-uni-blue'
+                        }`}
+                      />
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}

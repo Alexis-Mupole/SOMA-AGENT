@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import Login from '@/components/Login';
 import StudentDashboard from '@/components/StudentDashboard';
 import TeacherDashboard from '@/components/TeacherDashboard';
@@ -8,12 +8,14 @@ import ParentDashboard from '@/components/ParentDashboard';
 import AcademicDashboard from '@/components/AcademicDashboard';
 import AdminDashboard from '@/components/AdminDashboard';
 import { UserProfile, Resource, SchoolInfo } from '@/types';
-import { supabase } from '@/lib/supabase/client';
+import { getCurrentProfile, logoutUser } from '@/lib/services/databaseService';
+import { ToastProvider } from '@/components/ui/Toast';
+import Logo from '@/components/ui/Logo';
 
 const SCHOOL: SchoolInfo = {
-  name: "Gayaza High School",
-  location: "Wakiso, Uganda",
-  motto: "Never Give Up"
+  name: 'Gayaza High School',
+  location: 'Wakiso, Uganda',
+  motto: 'Never Give Up',
 };
 
 export default function Home() {
@@ -23,38 +25,25 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    checkUser();
-  }, []);
+    let mounted = true;
 
-  const checkUser = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', session.user.id)
-          .single();
-        
-        if (profileData) {
-          setProfile({
-            id: profileData.id,
-            fullName: profileData.full_name,
-            role: profileData.role,
-            schoolId: profileData.school_id || '',
-            email: profileData.email || '',
-            status: profileData.status,
-            studentCode: profileData.student_code || undefined,
-          });
+    const checkUser = async () => {
+      try {
+        const current = await getCurrentProfile();
+        if (mounted && current) {
+          setProfile(current);
           setIsAuthenticated(true);
         }
+      } finally {
+        if (mounted) setLoading(false);
       }
-    } catch (error) {
-      console.error('Error checking user:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    };
+
+    checkUser();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const handleLoginSuccess = (userProfile: UserProfile) => {
     setProfile(userProfile);
@@ -62,53 +51,69 @@ export default function Home() {
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    await logoutUser();
     setIsAuthenticated(false);
     setProfile(null);
   };
 
   const handleAddResource = (newRes: Resource) => {
-    setResources(prev => [newRes, ...prev]);
+    setResources((prev) => [newRes, ...prev]);
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading...</p>
+      <div className="grid min-h-dvh place-items-center bg-uni-blue-950">
+        <div className="flex flex-col items-center gap-6 animate-fade-in">
+          <Logo size="lg" variant="dark" subtitle="Gayaza High School" />
+          <div className="relative h-1.5 w-40 overflow-hidden rounded-full bg-white/10">
+            <div className="absolute inset-y-0 left-0 w-1/3 animate-[shimmer_1.4s_infinite] rounded-full bg-crane-yellow" />
+          </div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-white/40">
+            Preparing your learning space
+          </p>
         </div>
       </div>
     );
   }
 
-  if (!isAuthenticated || !profile) {
-    return <Login onLogin={handleLoginSuccess} schoolName={SCHOOL.name} />;
-  }
-
   return (
-    <div className="min-h-screen bg-slate-50 relative">
-      {profile.role === 'student' && (
-        <StudentDashboard onLogout={handleLogout} resources={resources} school={SCHOOL} userProfile={profile} />
-      )}
-      
-      {profile.role === 'teacher' && (
-        <TeacherDashboard onLogout={handleLogout} resources={resources} onAddResource={handleAddResource} school={SCHOOL} userProfile={profile} />
-      )}
-      
-      {profile.role === 'parent' && (
-        <ParentDashboard onLogout={handleLogout} school={SCHOOL} userProfile={profile} />
-      )}
+    <ToastProvider>
+      {!isAuthenticated || !profile ? (
+        <Login onLogin={handleLoginSuccess} schoolName={SCHOOL.name} />
+      ) : (
+        <div className="relative min-h-dvh bg-surface">
+          {profile.role === 'student' && (
+            <StudentDashboard
+              onLogout={handleLogout}
+              resources={resources}
+              school={SCHOOL}
+              userProfile={profile}
+            />
+          )}
 
-      {profile.role === 'academic' && (
-        <AcademicDashboard onLogout={handleLogout} school={SCHOOL} userProfile={profile} />
-      )}
+          {profile.role === 'teacher' && (
+            <TeacherDashboard
+              onLogout={handleLogout}
+              resources={resources}
+              onAddResource={handleAddResource}
+              school={SCHOOL}
+              userProfile={profile}
+            />
+          )}
 
-      {profile.role === 'admin' && (
-        <AdminDashboard onLogout={handleLogout} userProfile={profile} />
+          {profile.role === 'parent' && (
+            <ParentDashboard onLogout={handleLogout} school={SCHOOL} userProfile={profile} />
+          )}
+
+          {profile.role === 'academic' && (
+            <AcademicDashboard onLogout={handleLogout} school={SCHOOL} userProfile={profile} />
+          )}
+
+          {profile.role === 'admin' && (
+            <AdminDashboard onLogout={handleLogout} userProfile={profile} />
+          )}
+        </div>
       )}
-      
-      <div className="fixed inset-0 pointer-events-none african-pattern -z-10" />
-    </div>
+    </ToastProvider>
   );
 }

@@ -59,7 +59,7 @@ const AcademicDashboard: React.FC<Props> = ({ onLogout, school, userProfile }) =
   const handleCreateClass = async () => {
     if (!newClassName) return;
     const newCls = await createSchoolClass(school.name, newClassName, newClassLevel);
-    setClasses(prev => [...prev, newCls]);
+    if (newCls) setClasses(prev => [...prev, newCls as SchoolClass]);
     setNewClassName('');
     alert(`Class ${newClassName} Created.`);
   };

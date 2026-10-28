@@ -1,65 +1,108 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenAI } from '@google/genai';
+import { TUTOR_SYSTEM_PROMPT, generateText, isGeminiConfigured } from '@/lib/ai/gemini';
+import { detectTopic, localTutorReply, TutorMessage } from '@/lib/ai/engine';
 
-const SCHOOL_CONTEXT = "Gayaza High School, Uganda. Motto: 'Never Give Up'.";
+export const runtime = 'nodejs';
+export const maxDuration = 30;
+
+const MAX_MESSAGE = 4000;
+const MAX_HISTORY = 12;
+
+function sanitiseHistory(history: unknown): TutorMessage[] {
+  if (!Array.isArray(history)) return [];
+  return history
+    .filter(
+      (m): m is TutorMessage =>
+        Boolean(m) &&
+        typeof m === 'object' &&
+        (m as TutorMessage).role !== undefined &&
+        ((m as TutorMessage).role === 'user' || (m as TutorMessage).role === 'assistant') &&
+        typeof (m as TutorMessage).content === 'string' &&
+        (m as TutorMessage).content.trim().length > 0
+    )
+    .slice(-MAX_HISTORY)
+    .map((m) => ({ role: m.role, content: m.content.slice(0, MAX_MESSAGE) }));
+}
+
+export async function GET() {
+  return NextResponse.json({
+    configured: isGeminiConfigured(),
+    tutor: 'Soma',
+    fallback: 'offline-tutor',
+  });
+}
 
 export async function POST(request: NextRequest) {
   try {
-    const { message, context = '' } = await request.json();
+    const body = await request.json().catch(() => ({}));
+    const message = typeof body.message === 'string' ? body.message.trim() : '';
+    const context = typeof body.context === 'string' ? body.context.slice(0, 2200) : '';
+    const studentName = typeof body.studentName === 'string' ? body.studentName.slice(0, 80) : '';
+    const history = sanitiseHistory(body.history);
 
     if (!message) {
-      return NextResponse.json(
-        { error: 'Message is required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Message is required' }, { status: 400 });
+    }
+    if (message.length > MAX_MESSAGE) {
+      return NextResponse.json({ error: 'Message is too long' }, { status: 413 });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      console.error('[SOMA-AI] API_KEY missing');
-      return NextResponse.json(
-        { error: 'AI service configuration error' },
-        { status: 500 }
-      );
+    // Always compute a local reply: it supplies suggestions and acts as a
+    // guaranteed fallback if the provider is unavailable.
+    const local = localTutorReply({ message, context, studentName, history });
+
+    if (isGeminiConfigured()) {
+      const contents = [
+        ...history.map((m) => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }],
+        })),
+        {
+          role: 'user',
+          parts: [
+            {
+              text: `${message}${
+                context ? `\n\n---\nLearner/school context supplied by the app:\n${context}` : ''
+              }`,
+            },
+          ],
+        },
+      ];
+
+      const result = await generateText({
+        contents,
+        systemInstruction: TUTOR_SYSTEM_PROMPT,
+        temperature: 0.65,
+        maxOutputTokens: 1500,
+      });
+
+      if (result) {
+        return NextResponse.json({
+          response: result.text,
+          mode: 'gemini',
+          model: result.model,
+          suggestions: local.suggestions,
+          topic: detectTopic(message),
+        });
+      }
     }
 
-    const ai = new GoogleGenAI({ apiKey });
-    
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: message,
-      config: {
-        systemInstruction: `You are Soma-Agent, an elite AI tutor for students at ${SCHOOL_CONTEXT}. 
-        Specialized in the Ugandan NCDC O-Level syllabus (Biology, Physics, Chemistry, Math).
-
-        STRICT FORMATTING RULES:
-        1. Use Markdown headers (###) for sub-topics.
-        2. Use Bold (**term**) for important Ugandan educational concepts or NCDC keywords.
-        3. Use bullet points for lists of facts or steps.
-        4. Use horizontal rules (---) to separate sections if a response is long.
-        5. Use blockquotes (>) for motivational Ugandan proverbs or teacher tips.
-
-        PEDAGOGICAL FLOW:
-        - If the student is just saying "hello" or starting, you MUST first present a "Table of Contents" for the O-Level Biology syllabus:
-          * Unit 1: **Cell Biology**
-          * Unit 2: **Plant Nutrition**
-          * Unit 3: **Human Transport**
-          * Unit 4: **Coordination**
-          * Unit 5: **Homeostasis**
-        - After listing these, ask: "Which of these specialized areas should we dive into first?"
-        - Persona: Highly professional yet encouraging. Uses local analogies (e.g., comparing blood circulation to Kampala's taxi park flow).
-        - Current Context: ${context}.`,
-      },
+    return NextResponse.json({
+      response: local.response,
+      mode: 'demo',
+      model: 'soma-offline-tutor',
+      suggestions: local.suggestions,
+      topic: local.topic,
     });
-
-    const text = response.text || "I'm sorry, I couldn't process that. Please try again.";
-
-    return NextResponse.json({ response: text });
   } catch (error) {
-    console.error('[SOMA-AI] Generation Error:', error);
-    return NextResponse.json(
-      { error: 'Failed to generate response' },
-      { status: 500 }
-    );
+    console.error('[SOMA-AI] chat error:', error);
+    // Even on an unexpected error, keep the conversation alive.
+    const local = localTutorReply({ message: 'help' });
+    return NextResponse.json({
+      response: local.response,
+      mode: 'demo',
+      model: 'soma-offline-tutor',
+      suggestions: local.suggestions,
+    });
   }
 }

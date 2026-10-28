@@ -31,6 +31,7 @@ export interface Database {
           motto?: string | null
           created_at?: string
         }
+        Relationships: []
       }
       classes: {
         Row: {
@@ -57,6 +58,7 @@ export interface Database {
           student_count?: number
           created_at?: string
         }
+        Relationships: []
       }
       profiles: {
         Row: {
@@ -92,6 +94,7 @@ export interface Database {
           student_code?: string | null
           created_at?: string
         }
+        Relationships: []
       }
       resources: {
         Row: {
@@ -127,6 +130,7 @@ export interface Database {
           file_size?: string | null
           created_at?: string
         }
+        Relationships: []
       }
       exams: {
         Row: {
@@ -159,6 +163,7 @@ export interface Database {
           status?: 'upcoming' | 'active' | 'completed'
           created_at?: string
         }
+        Relationships: []
       }
       feedback: {
         Row: {
@@ -188,6 +193,7 @@ export interface Database {
           is_read?: boolean
           created_at?: string
         }
+        Relationships: []
       }
       student_mastery: {
         Row: {
@@ -217,7 +223,20 @@ export interface Database {
           mastery_percentage?: number
           updated_at?: string
         }
+        Relationships: []
       }
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      [_ in never]: never
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
     }
   }
 }

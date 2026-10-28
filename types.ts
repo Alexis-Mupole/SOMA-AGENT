@@ -19,6 +19,8 @@ export interface SyllabusNode {
   subject: string;
   status: MasteryStatus;
   order: number;
+  progress?: number;
+  description?: string;
 }
 
 // User Profile with personalized information
@@ -77,6 +79,9 @@ export interface Resource {
   fileSize: string; 
   subject: string; 
   content: string; 
+  readMinutes?: number;
+  teacherName?: string;
+  createdAt?: string;
 }
 
 // Configuration for the localized school
@@ -89,4 +94,24 @@ export interface SchoolInfo {
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
+  id?: string;
+  mode?: 'gemini' | 'demo';
+  suggestions?: string[];
+  createdAt?: number;
+}
+
+/** A single multiple-choice question returned by the AI quiz service. */
+export interface QuizQuestion {
+  id: string;
+  question: string;
+  options: string[];
+  correctIndex: number;
+  explanation: string;
+}
+
+export interface QuizResult {
+  topic: string;
+  questions: QuizQuestion[];
+  mode: 'gemini' | 'demo';
+  model?: string;
 }

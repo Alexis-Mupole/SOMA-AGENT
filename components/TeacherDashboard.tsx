@@ -78,8 +78,8 @@ const TeacherDashboard: React.FC<Props> = ({ onLogout, resources, onAddResource,
       subject: selectedSubject,
       duration: '1 Hour',
       status: 'upcoming'
-    });
-    setUpcomingExams([...upcomingExams, n]);
+    }, userProfile.schoolId);
+    if (n) setUpcomingExams(prev => [...prev, n]);
     setExamTitle(''); setExamDate('');
     alert("Exam scheduled and students notified.");
   };

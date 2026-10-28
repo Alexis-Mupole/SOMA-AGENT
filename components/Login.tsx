@@ -36,7 +36,7 @@ export default function Login({ onLogin, schoolName }: LoginProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
-  const formRef = useRef<HTMLDivElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
 
   const activeRole = useMemo(() => ROLES.find((r) => r.id === role)!, [role]);
   const selectedDemo = useMemo(
@@ -55,7 +55,10 @@ export default function Login({ onLogin, schoolName }: LoginProps) {
     setSuccessMsg(
       `Credentials loaded for ${account.fullName}. Press “Continue as ${ROLES.find((r) => r.id === demoRole)?.label.toLowerCase()}” to sign in.`
     );
-    formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    requestAnimationFrame(() => {
+      emailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      emailRef.current?.focus({ preventScroll: true });
+    });
   };
 
   const handleRoleChange = (nextRole: UserRole) => {
@@ -172,7 +175,7 @@ export default function Login({ onLogin, schoolName }: LoginProps) {
 
       {/* Form panel */}
       <section className="flex items-center justify-center px-4 py-8 sm:px-8 lg:py-12">
-        <div ref={formRef} className="w-full max-w-[460px] animate-fade-up">
+        <div className="w-full max-w-[460px] animate-fade-up">
           <div className="mb-7">
             <p className="eyebrow">{isRegistering ? 'Join the platform' : 'Welcome back'}</p>
             <h2 className="mt-2 font-display text-[28px] font-extrabold tracking-tight text-uni-blue">
@@ -236,6 +239,7 @@ export default function Login({ onLogin, schoolName }: LoginProps) {
                 <Icon name="mail" size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
                   id="email"
+                  ref={emailRef}
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -368,6 +372,12 @@ export default function Login({ onLogin, schoolName }: LoginProps) {
                   );
                 })}
               </div>
+              {selectedDemo && (
+                <p className="mt-3 flex items-center gap-1.5 text-[10.5px] font-semibold text-leaf-green-800">
+                  <Icon name="check-circle" size={13} className="shrink-0" />
+                  {selectedDemo.fullName}&apos;s email and password are filled in above. Press continue to sign in.
+                </p>
+              )}
             </div>
           )}
 

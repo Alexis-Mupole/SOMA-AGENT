@@ -100,21 +100,20 @@ export const authenticateUser = async (email: string, password: string): Promise
   if (supabase) {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({ email: normalised, password });
-      if (error || !data.user) return null;
-
-      const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.user.id).single();
-      if (!profile) return null;
-
-      const mapped = mapProfile(profile as Record<string, unknown>);
-      saveDemoSession(mapped);
-      return mapped;
+      if (!error && data.user) {
+        const { data: profile } = await supabase.from('profiles').select('*').eq('id', data.user.id).single();
+        if (profile) {
+          const mapped = mapProfile(profile as Record<string, unknown>);
+          saveDemoSession(mapped);
+          return mapped;
+        }
+      }
     } catch (error) {
       console.error('Auth error:', error);
-      return null;
     }
   }
 
-  // Demo mode: accept the published demo credentials only.
+  // Demo fallback: accept published demo credentials even if Supabase is configured.
   const account = Object.values(DEMO_ACCOUNTS).find(
     (a) => a.email.toLowerCase() === normalised && a.password === password
   );
